@@ -185,52 +185,49 @@ Queries (`0x810C`) and unsolicited push notifications (`0x0204`) multiplex multi
 |---|---|---|
 | **Production macOS App** | [`/Applications/OnePlus Buds.app`](file:///Applications/OnePlus%20Buds.app) | Unified AppKit agent bundle (`LSUIElement = true`) with embedded Mach-O binary. |
 | **Workspace Source Tree** | `/Users/digvijayasatapathy/HeyMelody_unpacked/` | Canonical development source tree. |
+| **Git Remote Repository** | [github.com/digisatapathy2025/oneplus-buds-mac](https://github.com/digisatapathy2025/oneplus-buds-mac) | Official GitHub repository for the companion application. |
 | **Core Protocol Engine** | [`core/protocol.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/protocol.py) | OPOv1 framing, TLV encoding, battery/noise/feature packet parsing. |
 | **BLE Controller & State** | [`core/ble_controller.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/ble_controller.py) | Shared state machine (`BudsState`) and hardware controllers. |
 | **Unix Domain Socket IPC** | [`core/ipc.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/ipc.py) | Local socket IPC server (`/tmp/oneplus_buds_ipc.sock`) and client. |
-| **Menu Bar Companion** | [`core/menubar.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/menubar.py) | Native AppKit status bar agent & clean 330×540px AirPods popover. |
-| **Desktop Settings GUI** | [`core/gui.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/gui.py) | Full CustomTkinter settings window (attaches via IPC). |
-| **Scriptable CLI Controller** | [`buds_controller.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py) | Terminal CLI/TUI client over Unix Domain Socket IPC. |
+| **Menu Bar Companion** | [`core/menubar.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/core/menubar.py) | Native AppKit status bar agent, icon-only button, 5.0s timeout guard, 0px collapse & AirPods popover. |
+| **Scriptable CLI** | [`buds.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/buds.py) | Unified CLI launcher supporting `--cli`, `--menubar`, and status queries. |
 | **Bluetooth Audio Daemon** | [`bluetooth_monitor.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/bluetooth_monitor.py) | System-level IOBluetooth audio connection watcher (0.0% CPU). |
 | **LaunchAgent Daemon Plist** | `~/Library/LaunchAgents/com.oneplus.buds.listener.plist` | Manages persistent startup of the background Bluetooth listener. |
 | **Device Compatibility Catalog** | [`device_manager.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/device_manager.py) | Multi-device catalog supporting 82+ OnePlus/OPPO/Realme models. |
 | **Live State Cache** | `~/.buds_controller_cache.json` | Persistent cache holding last-known battery, ANC mode, and EQ states. |
+| **Native Swift Edition** | [`swift/`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/swift/) | 100% pure Swift 6 implementation (CLI `buds`, Menu Bar App `OnePlusBudsApp`, and `nordbuds_plus.swift`). |
 
 ---
 
 ## 6. How to Run, Control & Test
 
-### 6.1 Status & Diagnostics
+### 6.1 Status & Diagnostics via CLI
 ```bash
 # Formatted status box
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py status
+python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds.py --cli status
 
-# Machine-readable JSON output
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py status --json
-
-# IPC socket ping
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py ping
+# Native Swift CLI status
+/Users/digvijayasatapathy/HeyMelody_unpacked/swift/.build/release/buds status
 ```
 
-### 6.2 Noise Control via CLI / IPC
+### 6.2 Noise Control via CLI
 ```bash
 # Off
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py anc 0
+python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds.py --cli -m off
 
 # Transparency
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py anc 1
+python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds.py --cli -m transparency
 
-# Noise Cancellation
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds_controller.py anc 2
+# Noise Cancellation (High)
+python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds.py --cli -m high
 ```
 
-### 6.3 Launching the Desktop Settings GUI
+### 6.3 Standalone Swift CLI (No Compilation Needed)
 ```bash
-# Open Settings window attached to active menu bar session
-open -a "/Applications/OnePlus Buds.app" --args --gui
-
-# Or via Python launcher
-python3 /Users/digvijayasatapathy/HeyMelody_unpacked/buds.py --gui
+# Run drop-in Swift script
+/Users/digvijayasatapathy/HeyMelody_unpacked/swift/nordbuds_plus.swift on
+/Users/digvijayasatapathy/HeyMelody_unpacked/swift/nordbuds_plus.swift off
+/Users/digvijayasatapathy/HeyMelody_unpacked/swift/nordbuds_plus.swift battery
 ```
 
 ### 6.4 Inspecting Background Daemon Logs
