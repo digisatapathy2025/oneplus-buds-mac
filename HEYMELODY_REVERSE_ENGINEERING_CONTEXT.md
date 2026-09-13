@@ -1,8 +1,8 @@
 # HeyMelody Reverse-Engineering & OnePlus Buds macOS Companion
 **Saved Context & Comprehensive Technical Documentation**  
-**Dates Active:** September 10 – 12, 2026  
+**Dates Active:** September 10 – 13, 2026  
 **Target Package:** `com.heytap.headset` (HeyMelody v116.9.0)  
-**Hardware Tested:** OnePlus Buds 3 (Model E509A, Product ID `063C14`, MAC `88:92:CC:43:31:19`)  
+**Hardware Tested:** OnePlus Buds 3 (Model E509A, `063C14`), OnePlus Nord Buds 2 (`062414`), OnePlus Nord Buds CE (`061C14`)  
 **Test Environment:** macOS 15+ (Sequoia / Sonoma, Apple Silicon arm64) + Xiaomi 2109119DI (Android 14 via ADB `e2784b6`)
 
 ---
@@ -196,6 +196,8 @@ Queries (`0x810C`) and unsolicited push notifications (`0x0204`) multiplex multi
 | **Device Compatibility Catalog** | [`device_manager.py`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/device_manager.py) | Multi-device catalog supporting 82+ OnePlus/OPPO/Realme models. |
 | **Live State Cache** | `~/.buds_controller_cache.json` | Persistent cache holding last-known battery, ANC mode, and EQ states. |
 | **Native Swift Edition** | [`swift/`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/swift/) | 100% pure Swift 6 implementation (CLI `buds`, Menu Bar App `OnePlusBudsApp`, and `nordbuds_plus.swift`). |
+| **Protocol Test Plan & Matrix** | [`heymelody_device_test_plan.xlsx`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/heymelody_device_test_plan.xlsx) | Master Excel workbook containing `Protocol Test Suites` (21 tests) and `Device Test Matrix` (82 models). |
+| **Daily Progress (Sept 13)** | [`PROGRESS_2026-09-13.md`](file:///Users/digvijayasatapathy/HeyMelody_unpacked/PROGRESS_2026-09-13.md) | Progress log covering protocol test suites, `collectLogs` catalog audit, and macOS device validations. |
 
 ---
 
@@ -237,4 +239,13 @@ tail -f /tmp/oneplus_buds_listener.log
 
 # Check active process status
 ps aux | grep -i "OnePlusBuds\|bluetooth_monitor" | grep -v grep
+```
+
+### 6.5 Protocol Conformance & Test Suite Execution
+```bash
+# Verify paired hardware against catalog
+python3 -c "import json; cat = json.load(open('device_catalog_decrypted.json'))['compatWhiteList']; print(f'{len(cat)} models loaded')"
+
+# Check Protocol Test Suites in master test plan
+python3 -c "import openpyxl; wb = openpyxl.load_workbook('heymelody_device_test_plan.xlsx', data_only=True); print(wb.sheetnames)"
 ```
