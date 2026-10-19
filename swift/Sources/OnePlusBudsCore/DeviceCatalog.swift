@@ -6,14 +6,16 @@ public struct DeviceProfile: Sendable, Equatable {
     public let serviceUUID: String
     public let hasCase: Bool
     public let isNeckband: Bool
+    public let hasAnc: Bool
     public let supportedFeatures: [FeatureId]
 
-    public init(name: String, modelCode: String, serviceUUID: String, hasCase: Bool = true, isNeckband: Bool = false, supportedFeatures: [FeatureId] = [.inEar, .gameMode, .bassEngine, .spatialAudio, .dualConnect]) {
+    public init(name: String, modelCode: String, serviceUUID: String, hasCase: Bool = true, isNeckband: Bool = false, hasAnc: Bool = true, supportedFeatures: [FeatureId] = [.inEar, .gameMode, .bassEngine, .spatialAudio, .dualConnect]) {
         self.name = name
         self.modelCode = modelCode
         self.serviceUUID = serviceUUID
         self.hasCase = hasCase
         self.isNeckband = isNeckband
+        self.hasAnc = hasAnc
         self.supportedFeatures = supportedFeatures
     }
 }
@@ -38,15 +40,15 @@ public final class DeviceCatalog: @unchecked Sendable {
         DeviceProfile(name: "OnePlus Buds Pro", modelCode: "060C14", serviceUUID: BudsUUIDs.serviceV1),
         DeviceProfile(name: "OnePlus Buds 4", modelCode: "065414", serviceUUID: BudsUUIDs.serviceV1),
         DeviceProfile(name: "OnePlus Buds Z2", modelCode: "061014", serviceUUID: BudsUUIDs.serviceV1),
-        DeviceProfile(name: "OnePlus Buds Z", modelCode: "060814", serviceUUID: BudsUUIDs.serviceV1),
+        DeviceProfile(name: "OnePlus Buds Z", modelCode: "060814", serviceUUID: BudsUUIDs.serviceV1, hasAnc: false, supportedFeatures: [.inEar]),
 
         // OnePlus Nord Series
         DeviceProfile(name: "OnePlus Nord Buds 2", modelCode: "062414", serviceUUID: BudsUUIDs.serviceV2, supportedFeatures: [.gameMode, .bassEngine]),
-        DeviceProfile(name: "OnePlus Nord Buds 2r", modelCode: "062C14", serviceUUID: BudsUUIDs.serviceV2, supportedFeatures: [.gameMode]),
+        DeviceProfile(name: "OnePlus Nord Buds 2r", modelCode: "062C14", serviceUUID: BudsUUIDs.serviceV2, hasAnc: false, supportedFeatures: [.gameMode]),
         DeviceProfile(name: "OnePlus Nord Buds 3 Pro", modelCode: "064414", serviceUUID: BudsUUIDs.serviceV1),
         DeviceProfile(name: "OnePlus Nord Buds 3", modelCode: "065014", serviceUUID: BudsUUIDs.serviceV1),
         DeviceProfile(name: "OnePlus Nord Buds 4 Pro", modelCode: "066814", serviceUUID: BudsUUIDs.serviceV1),
-        DeviceProfile(name: "OnePlus Nord Buds CE", modelCode: "061C14", serviceUUID: BudsUUIDs.serviceV2),
+        DeviceProfile(name: "OnePlus Nord Buds CE", modelCode: "061C14", serviceUUID: BudsUUIDs.serviceV1, hasAnc: false, supportedFeatures: [.gameMode, .bassEngine]),
 
         // Neckbands
         DeviceProfile(name: "OnePlus BulletsWireless Z2 ANC", modelCode: "050C14", serviceUUID: BudsUUIDs.serviceV2, hasCase: false, isNeckband: true, supportedFeatures: [.bassEngine]),
@@ -76,7 +78,54 @@ public final class DeviceCatalog: @unchecked Sendable {
             }
         }
 
-        // 2. Direct substring match
+        // 2. Specific Model Heuristics (evaluate specific models before broad substrings)
+        if (clean.contains("nord") || clean.contains("buds")) && clean.contains("ce") {
+            return profiles.first { $0.name == "OnePlus Nord Buds CE" }
+        }
+        if clean.contains("nord") && clean.contains("2r") {
+            return profiles.first { $0.name == "OnePlus Nord Buds 2r" }
+        }
+        if clean.contains("nord") && clean.contains("2") && !clean.contains("3") {
+            return profiles.first { $0.name == "OnePlus Nord Buds 2" }
+        }
+        if clean.contains("nord") && clean.contains("3") && clean.contains("pro") {
+            return profiles.first { $0.name == "OnePlus Nord Buds 3 Pro" }
+        }
+        if clean.contains("nord") && clean.contains("3") && !clean.contains("pro") {
+            return profiles.first { $0.name == "OnePlus Nord Buds 3" }
+        }
+        if clean.contains("nord") && clean.contains("4") && clean.contains("pro") {
+            return profiles.first { $0.name == "OnePlus Nord Buds 4 Pro" }
+        }
+        if clean.contains("buds 3") && !clean.contains("nord") && !clean.contains("pro") {
+            return profiles.first { $0.name == "OnePlus Buds 3" }
+        }
+        if clean.contains("pro 3") {
+            return profiles.first { $0.name == "OnePlus Buds Pro 3" }
+        }
+        if clean.contains("pro 2") && !clean.contains("2r") {
+            return profiles.first { $0.name == "OnePlus Buds Pro 2" }
+        }
+        if clean.contains("pro 2r") {
+            return profiles.first { $0.name == "OnePlus Buds Pro 2R" }
+        }
+        if clean.contains("buds pro") && !clean.contains("2") && !clean.contains("3") {
+            return profiles.first { $0.name == "OnePlus Buds Pro" }
+        }
+        if clean.contains("buds 4") {
+            return profiles.first { $0.name == "OnePlus Buds 4" }
+        }
+        if clean.contains("z2") {
+            return profiles.first { $0.name == "OnePlus Buds Z2" }
+        }
+        if clean.contains("buds z") && !clean.contains("z2") {
+            return profiles.first { $0.name == "OnePlus Buds Z" }
+        }
+        if clean.contains("bullets") {
+            return profiles.first { $0.name == "OnePlus BulletsWireless Z2 ANC" }
+        }
+
+        // 3. Direct substring match
         for p in profiles {
             let pLower = p.name.lowercased()
             if clean.contains(pLower) || pLower.contains(clean) {
@@ -84,28 +133,7 @@ public final class DeviceCatalog: @unchecked Sendable {
             }
         }
 
-        // 3. Keyword heuristics
-        if clean.contains("nord") && clean.contains("2") && !clean.contains("2r") && !clean.contains("3") {
-            return profiles.first { $0.name == "OnePlus Nord Buds 2" }
-        }
-        if clean.contains("nord") && clean.contains("2r") {
-            return profiles.first { $0.name == "OnePlus Nord Buds 2r" }
-        }
-        if clean.contains("nord") && clean.contains("3") && clean.contains("pro") {
-            return profiles.first { $0.name == "OnePlus Nord Buds 3 Pro" }
-        }
-        if clean.contains("buds 3") && !clean.contains("nord") {
-            return profiles.first { $0.name == "OnePlus Buds 3" }
-        }
-        if clean.contains("pro 3") {
-            return profiles.first { $0.name == "OnePlus Buds Pro 3" }
-        }
-        if clean.contains("pro 2") {
-            return profiles.first { $0.name == "OnePlus Buds Pro 2" }
-        }
-        if clean.contains("bullets") || clean.contains("z2") {
-            return profiles.first { $0.name == "OnePlus BulletsWireless Z2 ANC" }
-        }
+        // 4. Default vendor fallback only if explicitly branded
         if clean.contains("oneplus") || clean.contains("oppo") || clean.contains("enco") {
             return defaultProfile
         }

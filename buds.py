@@ -26,6 +26,11 @@ CLI_FLAGS = {
     "-s", "--scan",
     "-a", "--address",
     "--list-devices",
+    "--devices",
+    "--switch",
+    "status",
+    "devices",
+    "switch",
 }
 
 
@@ -35,6 +40,8 @@ def print_help():
 Usage:
   buds.py [--menubar]           Run AirPods-style menu bar agent (default)
   buds.py --cli [options]       Execute CLI command or print status
+  buds.py --devices             List all paired OnePlus / OPPO / Realme earbuds (HeyMelody)
+  buds.py switch <device>       Switch active connection to specified earbud
   buds.py -i, --interactive     Launch interactive CLI control menu
 
 Modes:
@@ -43,7 +50,11 @@ Modes:
                                 (All device controls and settings are built directly in)
   --cli                         Run headless CLI command over IPC or standalone BLE.
 
-CLI Options:
+Multi-Device Options:
+  --devices, devices            List all paired earbuds on this Mac with live connection status
+  --switch <device>, switch     Switch active connection to target earbud (e.g. 'OnePlus Nord Buds 2')
+
+Audio & ANC Controls:
   -i, --interactive             Interactive text control menu
   -m, --mode <mode>             Set Noise Mode: high, moderate, low, auto, off, transparency
   -l, --level <level>           Set ANC Intensity: mild, moderate, smart
@@ -51,10 +62,10 @@ CLI Options:
   --spatial-audio <on|off>      Enable/disable Spatial Audio (3D sound)
   --bass-boost <on|off>         Enable/disable BassWave
   --in-ear <on|off>             Enable/disable In-Ear wear detection
-  --dual-connect <on|off>       Enable/disable Dual Connection
+  --dual-connect <on|off>       Enable/disable Dual Connection (Multipoint)
   --vocal-enhance <on|off>      Enable/disable Vocal Enhancement
   --eq <preset>                 Set Sound Master EQ: Balanced, Bass, Clear, Bold
-  --list-devices                List all 82 supported OnePlus / OPPO / Realme models
+  --list-devices                List all 82 supported OnePlus / OPPO / Realme models in catalog
   -s, --scan                    Force standalone BLE scan (bypassing menu bar IPC)
   -a, --address <addr>          Target specific BLE address or UUID
 """)

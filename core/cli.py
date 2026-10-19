@@ -124,6 +124,25 @@ def print_status_box(state_dict: Dict[str, Any]):
     cur_eq = state_dict.get("current_eq", "Balanced")
     print("├────────────────────────────────────────────────────────┤")
     print(f"│  🎵 Sound Master EQ: {cur_eq:<33}│")
+
+    # Paired Devices (HeyMelody-style My Devices)
+    try:
+        from core.menubar import get_paired_supported_devices
+        paired = get_paired_supported_devices()
+        if paired and len(paired) > 1:
+            print("├────────────────────────────────────────────────────────┤")
+            print("│  🎧 My Devices (Paired):                               │")
+            for p in paired:
+                is_cur = p["name"].lower() == prof.name.lower() or (p["address"] and p["address"].lower() == (state_dict.get("address") or "").lower())
+                prefix = "●" if p["is_connected"] else "○"
+                act = " [ACTIVE]" if is_cur else ""
+                row = f"   {prefix} {p['name']}{act}"
+                if len(row) > 52:
+                    row = row[:49] + "..."
+                print(f"│ {row:<55}│")
+    except Exception:
+        pass
+
     print("└────────────────────────────────────────────────────────┘\n")
 
 
@@ -230,9 +249,83 @@ async def run_interactive_standalone(controller: BaseBudsController, transport: 
         await asyncio.sleep(0.3)
 
 
+def print_paired_devices(devices_info: List[Dict[str, Any]], active_name: str = ""):
+    print(f"\n{'=' * 68}")
+    print(f" My Devices (Paired OnePlus / OPPO / Realme Earbuds on macOS)")
+    print(f"{'=' * 68}\n")
+    if not devices_info:
+        print("   No paired OnePlus / OPPO earbuds found on macOS.")
+    else:
+        for idx, d in enumerate(devices_info, 1):
+            name = d.get("name", "")
+            addr = d.get("address", "")
+            is_conn = d.get("is_connected", False)
+            is_act = d.get("is_active", False)
+            cat = d.get("category", "")
+            bat = d.get("battery", {})
+
+            status_tag = "● Connected" if is_conn else "○ Disconnected"
+            active_tag = " [ACTIVE]" if is_act else ""
+
+            bat_parts = []
+            if bat:
+                left = bat.get("left", {})
+                if isinstance(left, dict) and left.get("level", 0) > 0:
+                    bat_parts.append(f"L: {left.get('level')}%")
+                right = bat.get("right", {})
+                if isinstance(right, dict) and right.get("level", 0) > 0:
+                    bat_parts.append(f"R: {right.get('level')}%")
+                case = bat.get("case", {})
+                if isinstance(case, dict) and case.get("level", 0) > 0:
+                    bat_parts.append(f"Case: {case.get('level')}%")
+            bat_str = f" ({', '.join(bat_parts)})" if bat_parts else ""
+
+            prefix = "▶" if is_act else " "
+            print(f" {prefix} [{idx}] {name:<26} {status_tag:<14}{bat_str}{active_tag}")
+            print(f"       Address: {addr:<20} Type: {cat}")
+    print()
+
+
 async def main_cli(args):
     if getattr(args, "list_devices", False):
         print_device_catalog()
+        return
+
+    if getattr(args, "devices", False) or args.command == "devices":
+        if BudsIPCClient.is_server_active():
+            client = BudsIPCClient()
+            if client.connect():
+                resp = client.list_devices()
+                if resp and resp.get("status") == "ok":
+                    print_paired_devices(resp.get("devices", []), resp.get("active_device", ""))
+                    client.disconnect()
+                    return
+                client.disconnect()
+        try:
+            from core.menubar import get_paired_supported_devices
+            paired = get_paired_supported_devices()
+            devs_out = [{"name": p["name"], "address": p["address"], "is_connected": p["is_connected"], "category": p["profile"].category_title} for p in paired]
+            print_paired_devices(devs_out)
+            return
+        except Exception as e:
+            print(f"Error reading paired devices: {e}")
+            return
+
+    switch_target = getattr(args, "switch", None) or (args.target if args.command == "switch" else None)
+    if switch_target:
+        if BudsIPCClient.is_server_active():
+            client = BudsIPCClient()
+            if client.connect():
+                resp = client.switch_device(switch_target)
+                if resp and resp.get("status") == "ok":
+                    print(f"✅ {resp.get('message', 'Device switched.')}")
+                else:
+                    print(f"❌ Failed to switch device: {resp.get('message') if resp else 'Unknown error'}")
+                client.disconnect()
+                return
+        s = BudsState()
+        s.load_device_state(switch_target)
+        print(f"✅ Active device switched to: {s.device_name}")
         return
 
     # Check if menu bar agent has active session
@@ -300,10 +393,24 @@ async def main_cli(args):
         target_addr = controller.state.address
         target_name = controller.state.device_name
 
+    try:
+        from core.menubar import find_connected_supported_device
+        active_prof, _ = find_connected_supported_device()
+        if not active_prof and not getattr(args, "scan", False) and args.command == "status":
+            print("ℹ️ Earbuds are disconnected. Showing last known cached status:")
+            print_status_box(controller.state.to_dict())
+            return
+    except Exception:
+        pass
+
     transport = BleakTransport(controller, address=target_addr)
     connected = await transport.connect(target_address=target_addr, target_name=target_name)
 
     if not connected:
+        if args.command == "status":
+            print("ℹ️ Earbuds are disconnected. Showing last known cached status:")
+            print_status_box(controller.state.to_dict())
+            return
         print("❌ Could not connect to earbuds.")
         return
 
@@ -360,7 +467,10 @@ async def main_cli(args):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OnePlus Buds Desktop Companion CLI for macOS / Linux / Windows")
-    parser.add_argument("command", nargs="?", default="status", help="Subcommand (status, etc.)")
+    parser.add_argument("command", nargs="?", default="status", help="Subcommand (status, switch, devices, etc.)")
+    parser.add_argument("target", nargs="?", default="", help="Target device name or address for switch command")
+    parser.add_argument("--devices", action="store_true", help="List all paired OnePlus / OPPO / Realme earbuds on this Mac (HeyMelody-style)")
+    parser.add_argument("--switch", help="Switch active earbud to specified device name or address")
     parser.add_argument("-a", "--address", help="BLE Device UUID or MAC Address (overrides cache)")
     parser.add_argument("-s", "--scan", action="store_true", help="Force BLE scan for nearby earbuds")
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive control menu")

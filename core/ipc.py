@@ -344,6 +344,55 @@ class BudsIPCServer:
             self.controller.refresh()
             return {"status": "ok", "state": self.controller.state.to_dict()}
 
+        # Multi-Device Commands (HeyMelody Parity)
+        elif cmd in ["list_devices", "devices", "get_devices"]:
+            from core.menubar import get_paired_supported_devices
+            paired = get_paired_supported_devices()
+            act_name = getattr(self.controller, "device_name", "") or (state.device_name if state else "")
+            act_addr = getattr(self.controller, "address", "") or (state.address if state else "")
+            devs_out = []
+            for p in paired:
+                is_act = (p["name"].lower() == act_name.lower()) or (p["address"] and p["address"].lower() == act_addr.lower())
+                cached = {}
+                if state and hasattr(state, "device_cache"):
+                    cached = state.device_cache.get(p["address"]) or state.device_cache.get(p["name"]) or {}
+                bat = cached.get("battery", {}) if cached else {}
+                devs_out.append({
+                    "name": p["name"],
+                    "raw_name": p["raw_name"],
+                    "address": p["address"],
+                    "product_id": p["profile"].product_id,
+                    "device_type": p["profile"].device_type,
+                    "category": p["profile"].category_title,
+                    "has_anc": p["profile"].has_anc,
+                    "has_spatial": p["profile"].has_spatial,
+                    "has_dual_connect": p["profile"].has_dual_connect,
+                    "is_connected": p["is_connected"],
+                    "is_active": is_act,
+                    "battery": bat,
+                })
+            return {
+                "status": "ok",
+                "active_device": act_name,
+                "devices": devs_out,
+                "total": len(devs_out)
+            }
+
+        elif cmd in ["switch_device", "switch"]:
+            target = req.get("device") or req.get("target") or req.get("name")
+            if not target:
+                return {"status": "error", "message": "Missing 'device' parameter"}
+
+            if hasattr(self.controller, "switch_to_device"):
+                self.controller.switch_to_device(target)
+            elif hasattr(self.controller, "delegate") and hasattr(self.controller.delegate, "switch_to_device"):
+                self.controller.delegate.switch_to_device(target)
+            else:
+                return {"status": "error", "message": "switch_to_device not implemented"}
+
+            self.broadcast_state(exclude=client)
+            return {"status": "ok", "message": f"Switching to {target}", "active_device": target}
+
         return {"status": "error", "message": f"Unknown command: {cmd}"}
 
 
@@ -456,6 +505,12 @@ class BudsIPCClient:
 
     def refresh(self) -> Optional[Dict[str, Any]]:
         return self.send_request({"command": "refresh"})
+
+    def list_devices(self) -> Optional[Dict[str, Any]]:
+        return self.send_request({"command": "list_devices"})
+
+    def switch_device(self, target: str) -> Optional[Dict[str, Any]]:
+        return self.send_request({"command": "switch_device", "device": target})
 
     def start_listening_updates(self, on_update: Callable[[Dict[str, Any]], None]):
         self.on_state_update = on_update

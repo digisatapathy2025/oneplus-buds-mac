@@ -175,13 +175,19 @@ final class BudsPopoverViewController: NSViewController {
         container.addSubview(eqSegment)
 
         // 6. Footer (y: 520)
+        let btnW: CGFloat = 98.0
+        let devBtn = NSButton(title: "Devices ▾", target: self, action: #selector(onDevicesClicked))
+        devBtn.frame = NSRect(x: 14, y: 520, width: btnW, height: 28)
+        devBtn.bezelStyle = .rounded
+        container.addSubview(devBtn)
+
         let refreshBtn = NSButton(title: "Refresh", target: self, action: #selector(onRefreshClicked))
-        refreshBtn.frame = NSRect(x: 14, y: 520, width: 150, height: 28)
+        refreshBtn.frame = NSRect(x: 120, y: 520, width: btnW, height: 28)
         refreshBtn.bezelStyle = .rounded
         container.addSubview(refreshBtn)
 
         let quitBtn = NSButton(title: "Quit", target: self, action: #selector(onQuitClicked))
-        quitBtn.frame = NSRect(x: 176, y: 520, width: 150, height: 28)
+        quitBtn.frame = NSRect(x: 226, y: 520, width: btnW, height: 28)
         quitBtn.bezelStyle = .rounded
         container.addSubview(quitBtn)
     }
@@ -227,7 +233,8 @@ final class BudsPopoverViewController: NSViewController {
     }
 
     func updateUI() {
-        titleLabel.stringValue = controller.activeProfile?.name ?? "OnePlus Buds"
+        let prof = controller.activeProfile
+        titleLabel.stringValue = prof?.name ?? "OnePlus Buds"
 
         if controller.isConnected {
             statusDot.stringValue = "● Connected"
@@ -261,27 +268,42 @@ final class BudsPopoverViewController: NSViewController {
         casePill.isCharging = b.caseBattery.isCharging
         casePill.isConnected = b.caseBattery.isConnected
 
-        // Noise Control
-        switch controller.primaryMode {
-        case .noiseCancellation:
-            noiseSegment.selectedSegment = 0
-            ancLevelSegment.isEnabled = true
-        case .off:
-            noiseSegment.selectedSegment = 1
+        // Noise Control with Hardware Capability Gating
+        let hasAnc = prof?.hasAnc ?? true
+        if !hasAnc {
+            noiseSegment.isEnabled = false
+            noiseSegment.selectedSegment = -1
             ancLevelSegment.isEnabled = false
-        case .transparency:
-            noiseSegment.selectedSegment = 2
-            ancLevelSegment.isEnabled = false
+            ancLevelSegment.selectedSegment = -1
+        } else {
+            noiseSegment.isEnabled = true
+            switch controller.primaryMode {
+            case .noiseCancellation:
+                noiseSegment.selectedSegment = 0
+                ancLevelSegment.isEnabled = true
+            case .off:
+                noiseSegment.selectedSegment = 1
+                ancLevelSegment.isEnabled = false
+            case .transparency:
+                noiseSegment.selectedSegment = 2
+                ancLevelSegment.isEnabled = false
+            }
+
+            switch controller.ancLevel {
+            case .auto: ancLevelSegment.selectedSegment = 0
+            case .low: ancLevelSegment.selectedSegment = 1
+            case .moderate: ancLevelSegment.selectedSegment = 2
+            case .high: ancLevelSegment.selectedSegment = 3
+            }
         }
 
-        switch controller.ancLevel {
-        case .auto: ancLevelSegment.selectedSegment = 0
-        case .low: ancLevelSegment.selectedSegment = 1
-        case .moderate: ancLevelSegment.selectedSegment = 2
-        case .high: ancLevelSegment.selectedSegment = 3
-        }
+        // Feature switches - hardware capability gating
+        bassSwitch.isEnabled = prof?.supportedFeatures.contains(.bassEngine) ?? true
+        gameSwitch.isEnabled = prof?.supportedFeatures.contains(.gameMode) ?? true
+        inEarSwitch.isEnabled = prof?.supportedFeatures.contains(.inEar) ?? true
+        dualSwitch.isEnabled = prof?.supportedFeatures.contains(.dualConnect) ?? true
+        spatialSwitch.isEnabled = prof?.supportedFeatures.contains(.spatialAudio) ?? true
 
-        // Feature switches
         bassSwitch.state = (controller.featureStates[.bassEngine] == true) ? .on : .off
         gameSwitch.state = (controller.featureStates[.gameMode] == true) ? .on : .off
         inEarSwitch.state = (controller.featureStates[.inEar] == true) ? .on : .off
@@ -355,6 +377,51 @@ final class BudsPopoverViewController: NSViewController {
         }
     }
 
+    @objc private func onDevicesClicked(sender: NSButton) {
+        let menu = NSMenu()
+        let devs = controller.getPairedDevices()
+        let activeAddr = (controller.connectedAddress ?? "").uppercased()
+        let activeName = (controller.activeProfile?.name ?? "").lowercased()
+
+        if devs.isEmpty {
+            let item = NSMenuItem(title: "No paired earbuds found", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else {
+            for d in devs {
+                let isConn = d.isConnected
+                let isCurrent = (d.address.uppercased() == activeAddr) || (d.name.lowercased() == activeName)
+                let glyph = isConn ? "●" : "○"
+                let statusTxt = isConn ? "Connected" : "Disconnected"
+                let check = isCurrent ? "✓ " : "   "
+                let item = NSMenuItem(title: "\(check)\(d.name) (\(glyph) \(statusTxt))", action: #selector(onDeviceSelected(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = d.address
+                if isCurrent {
+                    item.state = .on
+                }
+                menu.addItem(item)
+            }
+        }
+        menu.addItem(NSMenuItem.separator())
+        let rescanItem = NSMenuItem(title: "🔄 Scan for Earbuds...", action: #selector(onRescanClicked), keyEquivalent: "")
+        rescanItem.target = self
+        menu.addItem(rescanItem)
+
+        let p = NSPoint(x: 0, y: sender.bounds.height + 4.0)
+        menu.popUp(positioning: nil, at: p, in: sender)
+    }
+
+    @objc private func onDeviceSelected(_ sender: NSMenuItem) {
+        if let addr = sender.representedObject as? String {
+            controller.switchToDevice(identifier: addr)
+        }
+    }
+
+    @objc private func onRescanClicked() {
+        controller.attemptFastConnect()
+    }
+
     @objc private func onRefreshClicked() {
         controller.refresh()
     }
@@ -376,20 +443,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     private var popoverVC: BudsPopoverViewController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupStatusItem()
+        setupPopover()
+
         controller.delegate = self
         audioMonitor.delegate = self
         audioMonitor.start()
 
-        setupStatusItem()
-        setupPopover()
-
-        // Check initial active audio device
-        if let (profile, _) = SystemAudioMonitor.findConnectedSupportedDevice() {
-            controller.attemptFastConnect()
-            updateStatusItem(connected: true, profileName: profile.name)
-        } else {
-            updateStatusItem(connected: false, profileName: nil)
-        }
+        updateStatusItem(connected: controller.isConnected, profileName: controller.activeProfile?.name)
     }
 
     private func setupStatusItem() {
@@ -403,6 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
         button.title = ""
         button.target = self
         button.action = #selector(onStatusItemClicked)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
     private func setupPopover() {
@@ -415,6 +477,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
 
     @objc private func onStatusItemClicked() {
         guard let button = statusItem.button else { return }
+        let currentEvent = NSApp.currentEvent
+        let isRightClick = currentEvent?.type == .rightMouseUp || (currentEvent?.modifierFlags.contains(.control) == true)
+
+        if isRightClick {
+            if popover.isShown {
+                popover.performClose(nil)
+            }
+            showContextMenu(at: button)
+            return
+        }
+
         if popover.isShown {
             popover.performClose(nil)
         } else {
@@ -426,19 +499,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
         }
     }
 
+    private func showContextMenu(at button: NSStatusBarButton) {
+        let menu = NSMenu()
+
+        // 1. My Devices Submenu
+        let devicesItem = NSMenuItem(title: "My Devices", action: nil, keyEquivalent: "")
+        let devSubmenu = NSMenu(title: "My Devices")
+        let devs = controller.getPairedDevices()
+        let activeAddr = (controller.connectedAddress ?? "").uppercased()
+        let activeName = (controller.activeProfile?.name ?? "").lowercased()
+
+        if devs.isEmpty {
+            let emptyItem = NSMenuItem(title: "No paired earbuds found", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            devSubmenu.addItem(emptyItem)
+        } else {
+            for d in devs {
+                let isConn = d.isConnected
+                let isCurrent = (d.address.uppercased() == activeAddr) || (d.name.lowercased() == activeName)
+                let glyph = isConn ? "●" : "○"
+                let statusTxt = isConn ? "Connected" : "Disconnected"
+                let check = isCurrent ? "✓ " : "   "
+                let it = NSMenuItem(title: "\(check)\(d.name) (\(glyph) \(statusTxt))", action: #selector(onCtxSwitchDevice(_:)), keyEquivalent: "")
+                it.target = self
+                it.representedObject = d.address
+                if isCurrent {
+                    it.state = .on
+                }
+                devSubmenu.addItem(it)
+            }
+        }
+        devSubmenu.addItem(NSMenuItem.separator())
+        let scanItem = NSMenuItem(title: "🔄 Scan for Earbuds...", action: #selector(onCtxRescanClicked), keyEquivalent: "")
+        scanItem.target = self
+        devSubmenu.addItem(scanItem)
+        devicesItem.submenu = devSubmenu
+        menu.addItem(devicesItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. Noise Control Submenu
+        let noiseItem = NSMenuItem(title: "Noise Control", action: nil, keyEquivalent: "")
+        let noiseMenu = NSMenu(title: "Noise Control")
+        let ancItem = NSMenuItem(title: "Noise Cancellation", action: #selector(onCtxAncClicked), keyEquivalent: "")
+        ancItem.target = self
+        let offItem = NSMenuItem(title: "Off", action: #selector(onCtxOffClicked), keyEquivalent: "")
+        offItem.target = self
+        let transItem = NSMenuItem(title: "Transparency", action: #selector(onCtxTransClicked), keyEquivalent: "")
+        transItem.target = self
+
+        let hasAnc = controller.activeProfile?.hasAnc ?? true
+        if !hasAnc {
+            noiseItem.isEnabled = false
+        } else {
+            switch controller.primaryMode {
+            case .noiseCancellation: ancItem.state = .on
+            case .off: offItem.state = .on
+            case .transparency: transItem.state = .on
+            }
+        }
+        noiseMenu.addItem(ancItem)
+        noiseMenu.addItem(offItem)
+        noiseMenu.addItem(transItem)
+        noiseItem.submenu = noiseMenu
+        menu.addItem(noiseItem)
+
+        // 3. Sound Master EQ Submenu
+        let eqItem = NSMenuItem(title: "Sound Master EQ", action: nil, keyEquivalent: "")
+        let eqMenu = NSMenu(title: "Sound Master EQ")
+        for preset in EqualizerPreset.allCases {
+            let it = NSMenuItem(title: preset.rawValue, action: #selector(onCtxEqClicked(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = preset
+            if controller.currentEq == preset {
+                it.state = .on
+            }
+            eqMenu.addItem(it)
+        }
+        eqItem.submenu = eqMenu
+        menu.addItem(eqItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 4. Status
+        let statusTitle = "Status: \(controller.statusMessage)"
+        let statIt = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statIt.isEnabled = false
+        menu.addItem(statIt)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 5. Quit
+        let quitIt = NSMenuItem(title: "Quit OnePlus Buds", action: #selector(onCtxQuitClicked), keyEquivalent: "q")
+        quitIt.target = self
+        menu.addItem(quitIt)
+
+        statusItem.menu = menu
+        button.performClick(nil)
+        DispatchQueue.main.async {
+            self.statusItem.menu = nil
+        }
+    }
+
+    @objc private func onCtxSwitchDevice(_ sender: NSMenuItem) {
+        if let addr = sender.representedObject as? String {
+            controller.switchToDevice(identifier: addr)
+        }
+    }
+
+    @objc private func onCtxRescanClicked() {
+        controller.attemptFastConnect()
+    }
+
+    @objc private func onCtxAncClicked() {
+        controller.setNoiseMode(primary: .noiseCancellation, level: controller.ancLevel)
+    }
+
+    @objc private func onCtxOffClicked() {
+        controller.setNoiseMode(primary: .off)
+    }
+
+    @objc private func onCtxTransClicked() {
+        controller.setNoiseMode(primary: .transparency)
+    }
+
+    @objc private func onCtxEqClicked(_ sender: NSMenuItem) {
+        if let preset = sender.representedObject as? EqualizerPreset {
+            controller.setEqualizer(preset)
+        }
+    }
+
+    @objc private func onCtxQuitClicked() {
+        NSApplication.shared.terminate(nil)
+    }
+
     private func updateStatusItem(connected: Bool, profileName: String?) {
-        guard let button = statusItem.button else { return }
+        guard let item = statusItem, let button = item.button else { return }
+        item.length = NSStatusItem.variableLength
         if connected {
-            statusItem.length = NSStatusItem.variableLength
             let name = profileName ?? "OnePlus Buds"
             let left = controller.battery.left.isConnected ? "L: \(controller.battery.left.level)% " : ""
             let right = controller.battery.right.isConnected ? "R: \(controller.battery.right.level)% " : ""
             let caseBat = controller.battery.caseBattery.isConnected ? "Case: \(controller.battery.caseBattery.level)%" : ""
             button.toolTip = "\(name)\n\(left)\(right)\(caseBat)".trimmingCharacters(in: .whitespaces)
+            button.alphaValue = 1.0
         } else {
-            // Dynamic collapse to 0px
-            statusItem.length = 0.0
-            button.toolTip = "OnePlus Buds (Disconnected)"
+            button.alphaValue = 0.65
+            button.toolTip = "OnePlus Buds (Disconnected)\nRight-click for My Devices"
         }
     }
 
@@ -446,7 +653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     // BluetoothControllerDelegate
     // =========================================================================
     func controllerStateChanged() {
-        popoverVC.updateUI()
+        popoverVC?.updateUI()
         updateStatusItem(connected: controller.isConnected, profileName: controller.activeProfile?.name)
     }
 
@@ -458,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     // SystemAudioMonitorDelegate
     // =========================================================================
     func audioDeviceConnected(name: String, profile: DeviceProfile) {
-        controller.attemptFastConnect()
+        controller.connect(to: profile, deviceName: name)
         updateStatusItem(connected: true, profileName: profile.name)
     }
 
@@ -472,10 +679,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
 }
 
 // Entry Point
+var globalAppDelegate: AppDelegate?
+
 @MainActor
 func runApp() {
     let app = NSApplication.shared
     let delegate = AppDelegate()
+    globalAppDelegate = delegate
     app.delegate = delegate
     app.setActivationPolicy(.accessory)
     app.run()

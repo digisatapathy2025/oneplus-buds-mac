@@ -43,28 +43,35 @@ A lightweight, native macOS menu bar companion application for **OnePlus**, **OP
 - **Automatic Wakeup**: Automatically wakes up and connects the moment you take the earbuds out of their charging case.
 - **Smart Filtering**: Strictly ignores non-audio Bluetooth peripherals (mice, keyboards, gamepads, trackpads) and unrelated headphones.
 
-### 5. 🔄 Robust Multi-Device Switching & Connection Engine
+### 5. 🔄 HeyMelody-Style Multi-Device Switching & Parity
+- **"My Devices" Switcher**: Native multi-device picker in the popover footer (`Devices ▾`) and right-click context menu, listing all paired OnePlus, OPPO, and Realme earphones on macOS with real-time connection state (`● Connected` / `○ Disconnected`) and cached battery metrics.
+- **Isolated Per-Device State & Cache**: Preserves individual EQ profiles, feature toggles, and battery metrics per MAC address in `~/.buds_controller_cache.json`, preventing settings clobbering when switching earbuds.
+- **Hardware Feature Gating**: Automatically adapts the popover and CLI controls to match the active device's hardware profile (e.g. Disabling ANC for T2 Non-ANC models like Nord Buds CE, gating Spatial Audio and BassWave).
+- **1-Click Switching Engine**: Disconnects the active BLE session, sends standard `IOBluetooth` Classic audio connection requests if needed, loads the target device's profile, and attaches the fast CoreBluetooth link.
 - **Active Audio Device Synchronization**: Binds CoreBluetooth GATT sessions strictly to the active system audio output device, preventing inactive cached devices from hijacking the connection.
-- **State & Handshake Invalidation**: Automatically clears cached BLE addresses and handshake flags whenever you switch between earbuds (e.g. OnePlus Buds 3 ⇄ OnePlus Nord Buds 2).
-- **5.0-Second Timeout Guard**: Protects against CoreBluetooth connection hangs if a peripheral goes out of range or fails to respond.
-- **Fast Pair & Open BLE Discovery**: Integrates Fast Pair `0xFE2C` service detection and open BLE scanning for earbuds that omit 128-bit service UUIDs from their 31-byte advertisement packets.
 
 ### 6. 💻 Terminal CLI & Unix Domain Socket IPC
 - Full headless control via command-line arguments:
   ```bash
+  # List all paired OnePlus / OPPO earbuds (HeyMelody-style)
+  python3 buds.py --devices
+
+  # Switch active connection to a specific earbud
+  python3 buds.py switch "OnePlus Nord Buds 2"
+
   # Check live battery and feature status
-  python3 buds.py --cli status
+  python3 buds.py status
 
   # Change noise cancellation mode
-  python3 buds.py --cli -m high
+  python3 buds.py -m high
 
   # Toggle low-latency Game Mode
-  python3 buds.py --cli --game-mode on
+  python3 buds.py --game-mode on
 
   # Change EQ preset
-  python3 buds.py --cli --eq Balanced
+  python3 buds.py --eq Balanced
   ```
-- **Local IPC Socket** (`/tmp/oneplus_buds_ipc.sock`): Enables communication between the background daemon, the menu bar app, and custom terminal automation scripts.
+- **Local IPC Socket** (`/tmp/oneplus_buds_ipc.sock`): Enables communication between the background daemon, the menu bar app, and custom terminal automation scripts. Remote commands include `list_devices` and `switch_device`.
 
 ---
 

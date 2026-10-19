@@ -46,7 +46,7 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
 
     private func log(_ msg: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
-        print("[\(ts)] [BudsSwift] \(msg)")
+        print("[\(ts)] \(msg)")
         DispatchQueue.main.async {
             self.delegate?.logMessage(msg)
         }
@@ -77,19 +77,16 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
 
     private func onConnectionTimeout() {
         guard isConnecting else { return }
-        log("CoreBluetooth connectPeripheral timed out (5.0s). Cancelling.")
+        log("[BLE] Connection timeout")
         if let periph = peripheral {
             centralManager.cancelPeripheralConnection(periph)
         }
         peripheral = nil
         isConnecting = false
         statusMessage = "Connection Timed Out"
+        log("[BLE] Returning to idle; waiting for next audio connection event")
         notifyUI()
-
-        // Retry with targeted open scan if profile is known
-        if activeProfile != nil && !isScanning {
-            startTargetedScan()
-        }
+        // Strictly return to idle: NO retry, NO automatic scan
     }
 
     // =========================================================================
@@ -98,24 +95,94 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         log("CBCentralManager state changed: \(central.state.rawValue)")
         if central.state == .poweredOn {
-            if let (profile, _) = SystemAudioMonitor.findConnectedSupportedDevice() {
-                self.activeProfile = profile
-                self.attemptFastConnect()
-            } else {
-                log("Bluetooth powered on. No active audio device connected. Idle.")
+            log("Bluetooth powered on. Idle; waiting for supported audio device event.")
+        } else {
+            if isConnected || isConnecting {
+                disconnect()
             }
         }
     }
 
-    public func startTargetedScan() {
+    // =========================================================================
+    // Event-Driven Connection Pipeline
+    // =========================================================================
+    public func connect(to profile: DeviceProfile, deviceName: String? = nil, deviceAddress: String? = nil) {
+        guard centralManager.state == .poweredOn else {
+            log("[BLE] CentralManager not powered on. Cannot connect.")
+            return
+        }
+        guard !isConnected, !isConnecting else {
+            log("[BLE] Already connected or connecting. Ignoring duplicate connect request.")
+            return
+        }
+
+        self.activeProfile = profile
+        self.handshakeStarted = false
+        let targetName = (deviceName ?? profile.name).trimmingCharacters(in: .whitespaces)
+
+        log("[BLE] Connecting to \(targetName)")
+        log("[BLE] Profile: \(profile.name) [\(profile.modelCode)]")
+        log("[BLE] Expected service UUID: \(profile.serviceUUID)")
+        self.isConnecting = true
+        self.statusMessage = "Connecting..."
+        notifyUI()
+
+        // Zero-delay retrieval of connected peripherals matching GATT service UUIDs
+        var servicesToQuery: [CBUUID] = [
+            CBUUID(string: BudsUUIDs.serviceV1),
+            CBUUID(string: BudsUUIDs.serviceV2),
+            CBUUID(string: BudsUUIDs.fastPairService),
+            CBUUID(string: BudsUUIDs.fastPairShort)
+        ]
+        if let customUUID = CBUUID(string: profile.serviceUUID) as CBUUID?, !servicesToQuery.contains(customUUID) {
+            servicesToQuery.append(customUUID)
+        }
+
+        let connectedPeriphs = centralManager.retrieveConnectedPeripherals(withServices: servicesToQuery)
+        log("[BLE] Retrieved connected peripherals: \(connectedPeriphs.count)")
+        for p in connectedPeriphs {
+            log("[BLE] Candidate peripheral: \(p.name ?? "unnamed") [\(p.identifier.uuidString)]")
+        }
+
+        var targetPeriph: CBPeripheral?
+
+        let targetNameLower = targetName.lowercased()
+        for p in connectedPeriphs {
+            let pName = (p.name ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            if targetNameLower.contains(pName) || pName.contains(targetNameLower) {
+                targetPeriph = p
+                break
+            } else if let matched = DeviceCatalog.shared.matchDevice(name: pName), matched.name.lowercased() == profile.name.lowercased() {
+                targetPeriph = p
+                break
+            }
+        }
+
+        if let p = targetPeriph {
+            log("[BLE] Selected peripheral: \(p.name ?? targetName) [\(p.identifier.uuidString)]")
+            self.peripheral = p
+            p.delegate = self
+            self.connectedAddress = p.identifier.uuidString
+            self.centralManager.connect(p, options: nil)
+            self.startConnectionTimeout()
+            return
+        }
+
+        // If not immediately available in connected peripherals, perform a single bounded targeted scan
+        startTargetedScan(for: profile, deviceName: targetName, services: servicesToQuery)
+    }
+
+    // Single-shot targeted scan strictly bounded to the target profile's services
+    private func startTargetedScan(for profile: DeviceProfile, deviceName: String, services: [CBUUID]) {
         guard centralManager.state == .poweredOn, !isScanning else { return }
         isScanning = true
-        log("Starting targeted open BLE scan for: \(activeProfile?.name ?? "supported buds")")
-        // Passing nil performs open scan to discover 31-byte adv packets that omit 128-bit UUIDs
-        centralManager.scanForPeripherals(withServices: nil, options: nil)
+        log("[BLE] Performing targeted scan for \(deviceName)")
+
+        // Scan only for the specific service UUIDs of the device
+        centralManager.scanForPeripherals(withServices: services, options: nil)
 
         scanTimeoutTimer?.invalidate()
-        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
+        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             self?.onScanTimeout()
         }
     }
@@ -125,83 +192,84 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
         scanTimeoutTimer = nil
         if centralManager.isScanning {
             centralManager.stopScan()
-            log("Targeted scan timed out (8.0s).")
         }
         if isConnecting {
             isConnecting = false
-            statusMessage = "Disconnected"
+            statusMessage = "Connection Failed"
+            log("[BLE] Connection timeout")
+            log("[BLE] Returning to idle; waiting for next audio connection event")
             notifyUI()
         }
     }
 
+    // =========================================================================
+    // Multi-Device Management (HeyMelody-style Parity)
+    // =========================================================================
+    public func getPairedDevices() -> [PairedBudsDevice] {
+        let raw = SystemAudioMonitor.getPairedSupportedDevices()
+        return raw.map { item in
+            let addr = (item.device.addressString ?? item.device.nameOrAddress ?? "").replacingOccurrences(of: "-", with: ":").uppercased()
+            let n = item.device.name ?? item.profile.name
+            return PairedBudsDevice(name: n, address: addr, isConnected: item.isConnected, profile: item.profile)
+        }
+    }
+
+    public func switchToDevice(identifier: String) {
+        log("[BLE] User requested switch to device: '\(identifier)'")
+        let normId = identifier.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "-", with: ":").uppercased()
+        let idLower = identifier.trimmingCharacters(in: .whitespaces).lowercased()
+
+        // 1. Tear down current BLE session
+        disconnect()
+
+        // 2. Look up target device among paired devices
+        let paired = SystemAudioMonitor.getPairedSupportedDevices()
+        var targetItem: (device: IOBluetoothDevice, profile: DeviceProfile, isConnected: Bool)?
+
+        for item in paired {
+            let addr = (item.device.addressString ?? item.device.nameOrAddress ?? "").replacingOccurrences(of: "-", with: ":").uppercased()
+            let name = (item.device.name ?? item.device.nameOrAddress ?? "").lowercased()
+            let profName = item.profile.name.lowercased()
+
+            if addr == normId || name.contains(idLower) || idLower.contains(name) || profName.contains(idLower) || idLower.contains(profName) {
+                targetItem = item
+                break
+            }
+        }
+
+        if let target = targetItem {
+            log("[BLE] Target device matched: \(target.profile.name) [\(target.device.addressString ?? "")]")
+            if !target.device.isConnected() {
+                log("[BLE] Triggering IOBluetooth openConnection for classic audio link...")
+                target.device.openConnection()
+            }
+            connect(to: target.profile, deviceName: target.device.name ?? target.profile.name, deviceAddress: target.device.addressString)
+        } else if let matchedProf = DeviceCatalog.shared.matchDevice(name: identifier) {
+            log("[BLE] Target device matched via catalog fallback: \(matchedProf.name)")
+            connect(to: matchedProf, deviceName: identifier)
+        } else {
+            log("[BLE] Unknown target device: \(identifier)")
+        }
+    }
+
+    // Manual/CLI backwards compatibility entry point
     public func attemptFastConnect() {
         guard !isConnected, !isConnecting, centralManager.state == .poweredOn else { return }
-        handshakeStarted = false
-
-        // Synchronize strictly with connected audio device
-        if let (activeProf, _) = SystemAudioMonitor.findConnectedSupportedDevice() {
-            if self.activeProfile?.name != activeProf.name {
-                log("Active audio device changed to '\(activeProf.name)'. Resetting session.")
-                connectedAddress = nil
-                handshakeStarted = false
-            }
-            self.activeProfile = activeProf
-        }
-
-        guard let targetProfile = activeProfile else {
+        if let (activeProf, dev) = SystemAudioMonitor.findConnectedSupportedDevice() {
+            connect(to: activeProf, deviceName: dev.name ?? dev.nameOrAddress)
+        } else if let prof = activeProfile {
+            connect(to: prof)
+        } else {
             log("No active supported Bluetooth audio device connected. Aborting connect.")
-            return
         }
-
-        let targetName = targetProfile.name.trimmingCharacters(in: .whitespaces).lowercased()
-
-        // 1. Zero-delay retrieve of connected peripherals by service UUIDs
-        var servicesToQuery: [CBUUID] = [
-            CBUUID(string: BudsUUIDs.serviceV1),
-            CBUUID(string: BudsUUIDs.serviceV2),
-            CBUUID(string: BudsUUIDs.fastPairService),
-            CBUUID(string: BudsUUIDs.fastPairShort)
-        ]
-        if let customUUID = CBUUID(string: targetProfile.serviceUUID) as CBUUID?, !servicesToQuery.contains(customUUID) {
-            servicesToQuery.append(customUUID)
-        }
-
-        let connectedPeriphs = centralManager.retrieveConnectedPeripherals(withServices: servicesToQuery)
-        var targetPeriph: CBPeripheral?
-
-        for p in connectedPeriphs {
-            let pName = (p.name ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-            if targetName.contains(pName) || pName.contains(targetName) {
-                targetPeriph = p
-                break
-            } else if let matched = DeviceCatalog.shared.matchDevice(name: pName), matched.name.lowercased() == targetName {
-                targetPeriph = p
-                break
-            }
-        }
-
-        if let p = targetPeriph {
-            log("Fast retrieved connected peripheral: \(p.name ?? "") [\(p.identifier.uuidString)]")
-            self.isConnecting = true
-            self.statusMessage = "Connecting..."
-            self.peripheral = p
-            p.delegate = self
-            self.connectedAddress = p.identifier.uuidString
-            self.handshakeStarted = false
-            self.centralManager.connect(p, options: nil)
-            self.startConnectionTimeout()
-            self.notifyUI()
-            return
-        }
-
-        // 2. Open targeted BLE scan
-        startTargetedScan()
     }
 
     public func centralManager(_ central: CBCentralManager,
                                didDiscover peripheral: CBPeripheral,
                                advertisementData: [String : Any],
                                rssi RSSI: NSNumber) {
+        guard isConnecting, isScanning else { return }
+
         var name = peripheral.name ?? ""
         if name.isEmpty, let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String {
             name = localName
@@ -212,34 +280,26 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
         let nameLower = name.lowercased()
         let targetName = (activeProfile?.name ?? "").trimmingCharacters(in: .whitespaces).lowercased()
 
-        var matchedProfile: DeviceProfile?
+        var isMatch = false
         if !targetName.isEmpty && (nameLower.contains(targetName) || targetName.contains(nameLower)) {
-            matchedProfile = activeProfile
-        } else if let cand = DeviceCatalog.shared.matchDevice(name: name) {
-            if let active = activeProfile, cand.name.lowercased() == active.name.lowercased() {
-                matchedProfile = active
-            } else if activeProfile == nil {
-                matchedProfile = cand
-            }
+            isMatch = true
+        } else if let cand = DeviceCatalog.shared.matchDevice(name: name), let active = activeProfile, cand.name.lowercased() == active.name.lowercased() {
+            isMatch = true
         }
 
-        if let prof = matchedProfile {
-            log("Discovered matching BLE peripheral: \(name) [\(peripheral.identifier.uuidString)]")
+        if isMatch {
+            log("[BLE] Found target peripheral in scan: \(name) [\(peripheral.identifier.uuidString)]")
             isScanning = false
             centralManager.stopScan()
             scanTimeoutTimer?.invalidate()
             scanTimeoutTimer = nil
 
-            self.isConnecting = true
-            self.statusMessage = "Connecting..."
             self.peripheral = peripheral
-            self.activeProfile = prof
             self.connectedAddress = peripheral.identifier.uuidString
             peripheral.delegate = self
             self.handshakeStarted = false
             centralManager.connect(peripheral, options: nil)
             startConnectionTimeout()
-            notifyUI()
         }
     }
 
@@ -253,7 +313,7 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
         if let pName = peripheral.name, let matched = DeviceCatalog.shared.matchDevice(name: pName) {
             self.activeProfile = matched
         }
-        log("CoreBluetooth Connected to \(peripheral.name ?? "Buds") [\(peripheral.identifier.uuidString)]")
+        log("[BLE] Connected")
         notifyUI()
 
         let servicesToDiscover: [CBUUID] = [
@@ -273,8 +333,10 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
         handshakeStarted = false
         connectedAddress = nil
         statusMessage = "Connection Failed"
-        log("CoreBluetooth failed to connect: \(error?.localizedDescription ?? "unknown error")")
+        log("[BLE] Connection failed: \(error?.localizedDescription ?? "unknown error")")
+        log("[BLE] Returning to idle; waiting for next audio connection event")
         notifyUI()
+        // Strictly return to idle: NO retry, NO scan
     }
 
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -288,7 +350,7 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
         connectedAddress = nil
         statusMessage = "Disconnected"
         battery = BudsBatteryState()
-        log("CoreBluetooth Disconnected from peripheral: \(error?.localizedDescription ?? "clean disconnect")")
+        log("[BLE] Returning to idle; waiting for next audio connection event")
         notifyUI()
     }
 
@@ -474,10 +536,24 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
 
     public func disconnect() {
         cancelConnectionTimeout()
+        if isScanning {
+            centralManager.stopScan()
+            isScanning = false
+            scanTimeoutTimer?.invalidate()
+            scanTimeoutTimer = nil
+        }
         handshakeStarted = false
         connectedAddress = nil
+        activeProfile = nil
+        isConnecting = false
+        isConnected = false
         if let periph = peripheral {
             centralManager.cancelPeripheralConnection(periph)
+            peripheral = nil
         }
+        statusMessage = "Disconnected"
+        battery = BudsBatteryState()
+        log("[BLE] Returning to idle; waiting for next audio connection event")
+        notifyUI()
     }
 }

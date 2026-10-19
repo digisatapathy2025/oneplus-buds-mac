@@ -120,6 +120,53 @@ def find_connected_supported_device():
     return None, None
 
 
+def get_paired_supported_devices() -> List[Dict[str, Any]]:
+    """
+    Identifies all paired OnePlus / OPPO / Realme audio devices on macOS.
+    Deduplicates multiple entries (e.g. dual Classic and BLE records) and
+    returns a sorted list of registered headsets.
+    """
+    if not IOBluetoothDevice:
+        return []
+    devices_list = []
+    seen_addrs = set()
+    try:
+        paired = IOBluetoothDevice.pairedDevices() or []
+        for dev in paired:
+            if is_bluetooth_audio_device(dev):
+                name = dev.getName() or dev.nameOrAddress() or ""
+                profile = match_supported_device(name)
+                if profile:
+                    addr = ""
+                    try:
+                        addr = dev.getAddressString() or ""
+                    except Exception:
+                        pass
+                    norm_addr = addr.upper().replace("-", ":")
+                    key = norm_addr if norm_addr else profile.name.lower()
+                    if key in seen_addrs:
+                        continue
+                    seen_addrs.add(key)
+                    is_conn = False
+                    try:
+                        is_conn = dev.isConnected()
+                    except Exception:
+                        pass
+                    devices_list.append({
+                        "device": dev,
+                        "name": profile.name,
+                        "raw_name": name,
+                        "address": norm_addr,
+                        "profile": profile,
+                        "is_connected": is_conn,
+                    })
+    except Exception as e:
+        log(f"Error enumerating paired devices: {e}")
+    # Sort connected first, then by name
+    devices_list.sort(key=lambda x: (not x["is_connected"], x["name"]))
+    return devices_list
+
+
 def get_sf_symbol(name: str, size: float = 14.0, weight=AppKit.NSFontWeightMedium) -> Optional[AppKit.NSImage]:
     img = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
     if img:
@@ -716,6 +763,77 @@ class NativeBudsBLEController(CoreBluetooth.NSObject):
         if self.peripheral and self.central:
             self.central.cancelPeripheralConnection_(self.peripheral)
 
+    def switch_to_device(self, target_identifier: str):
+        """
+        HeyMelody-style multi-device switching:
+        Tears down current BLE link, saves state, activates the selected earbud,
+        triggers classic audio connection if needed, and establishes fast BLE GATT link.
+        """
+        log(f"Switching active device to: '{target_identifier}'")
+        target_norm = target_identifier.strip().lower().replace("-", ":")
+
+        # 1. Cleanly tear down current session
+        self.cancel_connection_timeout()
+        if self.is_scanning and self.central:
+            try:
+                self.central.stopScan()
+            except Exception:
+                pass
+            self.is_scanning = False
+
+        if self.peripheral and self.central:
+            try:
+                self.central.cancelPeripheralConnection_(self.peripheral)
+            except Exception:
+                pass
+            self.peripheral = None
+
+        self.tx_char = None
+        self.rx_char = None
+        self._handshake_started = False
+        self.is_connected = False
+        self.is_connecting = False
+
+        # 2. Look up target device among paired devices
+        paired_devs = get_paired_supported_devices()
+        target_entry = None
+        for d in paired_devs:
+            if (target_norm in d["name"].lower() or 
+                target_norm in d["raw_name"].lower() or 
+                (d["address"] and target_norm in d["address"].lower())):
+                target_entry = d
+                break
+
+        if target_entry:
+            prof = target_entry["profile"]
+            addr = target_entry["address"]
+            self.state.load_device_state(prof.name, address=addr)
+            self.state.profile = prof
+            self.state.device_name = prof.name
+
+            # If not connected via classic Bluetooth audio, request openConnection
+            dev_obj = target_entry.get("device")
+            if dev_obj:
+                try:
+                    if not dev_obj.isConnected():
+                        log(f"Triggering IOBluetooth openConnection for '{prof.name}'...")
+                        dev_obj.openConnection()
+                except Exception as e:
+                    log(f"IOBluetooth openConnection notice: {e}")
+        else:
+            cand = match_supported_device(target_identifier) or get_device_profile(target_identifier)
+            if cand:
+                self.state.load_device_state(cand.name)
+                self.state.profile = cand
+                self.state.device_name = cand.name
+
+        self.state.is_connecting = True
+        self.state.status_message = "Connecting..."
+        self.notify_ui()
+
+        # 3. Fast CoreBluetooth link to new device
+        self.attempt_fast_connect()
+
 
 # ==============================================================================
 # Custom Native AppKit Views (AirPods & macOS System Settings Style)
@@ -1006,6 +1124,7 @@ class BudsAirPodsApp(AppKit.NSObject):
         self.cancel_auto_dismiss()
         event = AppKit.NSApp.currentEvent()
         if event and (event.type() == AppKit.NSEventTypeRightMouseUp or (event.modifierFlags() & AppKit.NSEventModifierFlagControl)):
+            self.update_devices_menu()
             self.status_item.popUpStatusItemMenu_(self.context_menu)
         else:
             if self.popover.isShown():
@@ -1112,14 +1231,18 @@ class BudsAirPodsApp(AppKit.NSObject):
         self.status_label.setSelectable_(False)
         header_view.addSubview_(self.status_label)
 
-        # Connect / Disconnect button (Pill style)
-        self.connect_btn = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(content_w - 86.0, 8.0, 86.0, 26.0))
+        # Connect / Disconnect button & Switch Device button
+        self.connect_btn = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(content_w - 78.0, 8.0, 78.0, 26.0))
         self.connect_btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
         self.connect_btn.setTitle_("Disconnect")
         self.connect_btn.setFont_(AppKit.NSFont.systemFontOfSize_weight_(11.0, AppKit.NSFontWeightMedium))
         self.connect_btn.setTarget_(self)
         self.connect_btn.setAction_("onConnectToggleClicked:")
         header_view.addSubview_(self.connect_btn)
+
+        self.btn_header_devs = self.create_footer_button("", "arrow.triangle.2.circlepath", content_w - 110.0, 8.0, 28.0, "onDevicesButtonClicked:")
+        self.btn_header_devs.setToolTip_("Switch Device (My Devices)")
+        header_view.addSubview_(self.btn_header_devs)
 
         root.addSubview_(header_view)
         y += 50.0
@@ -1316,17 +1439,21 @@ class BudsAirPodsApp(AppKit.NSObject):
         root.addSubview_(self.eq_seg)
         y += 32.0
 
-        # 7. Symmetrical Footer Bar (Refresh, Quit) - Settings removed as all controls are in dropdown
+        # 7. Symmetrical Footer Bar (Devices, Refresh, Quit)
         sep = AppKit.NSBox.alloc().initWithFrame_(AppKit.NSMakeRect(pad, y, content_w, 1.0))
         sep.setBoxType_(AppKit.NSBoxSeparator)
         root.addSubview_(sep)
         y += 8.0
 
-        footer_w = (content_w - 10.0) / 2.0
-        self.btn_refresh = self.create_footer_button("Refresh", "arrow.clockwise", pad, y, footer_w, "onRefreshClicked:")
+        footer_gap = 6.0
+        footer_w = (content_w - (footer_gap * 2.0)) / 3.0
+        self.btn_devices = self.create_footer_button("Devices", "headphones", pad, y, footer_w, "onDevicesButtonClicked:")
+        root.addSubview_(self.btn_devices)
+
+        self.btn_refresh = self.create_footer_button("Refresh", "arrow.clockwise", pad + footer_w + footer_gap, y, footer_w, "onRefreshClicked:")
         root.addSubview_(self.btn_refresh)
 
-        self.btn_quit = self.create_footer_button("Quit", "power", pad + footer_w + 10.0, y, footer_w, "onQuitClicked:")
+        self.btn_quit = self.create_footer_button("Quit", "power", pad + (footer_w + footer_gap) * 2.0, y, footer_w, "onQuitClicked:")
         root.addSubview_(self.btn_quit)
         y += 34.0
 
@@ -1337,11 +1464,11 @@ class BudsAirPodsApp(AppKit.NSObject):
     def setup_context_menu(self):
         self.context_menu = AppKit.NSMenu.alloc().initWithTitle_("Buds Context Menu")
 
-        self.ctx_device_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            self.ble.device_name, None, ""
-        )
-        self.ctx_device_item.setEnabled_(False)
-        self.context_menu.addItem_(self.ctx_device_item)
+        # My Devices Submenu (HeyMelody-style Multi-Device Switcher)
+        self.ctx_devices_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("My Devices", None, "")
+        self.devices_submenu = AppKit.NSMenu.alloc().initWithTitle_("My Devices")
+        self.ctx_devices_item.setSubmenu_(self.devices_submenu)
+        self.context_menu.addItem_(self.ctx_devices_item)
 
         self.ctx_status_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Disconnected", None, ""
@@ -1350,6 +1477,54 @@ class BudsAirPodsApp(AppKit.NSObject):
         self.context_menu.addItem_(self.ctx_status_item)
 
         self.context_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+        self.update_devices_menu()
+
+    def update_devices_menu(self):
+        """Populates the My Devices submenu with all paired OnePlus/OPPO earphones and connection state."""
+        self.devices_submenu.removeAllItems()
+        paired = get_paired_supported_devices()
+        active_name = (self.ble.device_name or "").lower()
+        active_addr = (self.ble.address or "").lower()
+
+        if not paired:
+            empty_it = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("No paired earbuds found", None, "")
+            empty_it.setEnabled_(False)
+            self.devices_submenu.addItem_(empty_it)
+        else:
+            for d in paired:
+                name = d["name"]
+                addr = d["address"]
+                is_conn = d["is_connected"]
+                is_active = (name.lower() == active_name) or (addr and addr.lower() == active_addr)
+
+                status_glyph = "●" if is_conn else "○"
+                status_txt = "Connected" if is_conn else "Disconnected"
+
+                # Battery from cache if connected
+                bat_txt = ""
+                cached = self.ble.state.device_cache.get(addr) or self.ble.state.device_cache.get(name)
+                if cached and is_conn:
+                    b_info = cached.get("battery", {})
+                    left_l = b_info.get("left", {}).get("level", 0) if isinstance(b_info.get("left"), dict) else 0
+                    if left_l > 0:
+                        bat_txt = f" • {left_l}%"
+
+                title = f"{'✓ ' if is_active else '   '}{name} ({status_glyph} {status_txt}{bat_txt})"
+                it = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                    title, "onCtxSwitchDeviceClicked:", ""
+                )
+                it.setTarget_(self)
+                it.setRepresentedObject_(addr or name)
+                if is_active:
+                    it.setState_(AppKit.NSControlStateValueOn)
+                self.devices_submenu.addItem_(it)
+
+        self.devices_submenu.addItem_(AppKit.NSMenuItem.separatorItem())
+        rescan_it = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "🔄 Scan for Earbuds...", "onCtxRescanClicked:", ""
+        )
+        rescan_it.setTarget_(self)
+        self.devices_submenu.addItem_(rescan_it)
 
         # Noise Control Submenu
         anc_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Noise Control", None, "")
@@ -1499,33 +1674,53 @@ class BudsAirPodsApp(AppKit.NSObject):
                         ui["icon"].setContentTintColor_(AppKit.NSColor.secondaryLabelColor())
 
         # 4. Noise Control Segments
-        cur_prim = self.ble.last_primary_mode
-        cur_anc = self.ble.last_anc_mode
-        cur_noise = self.ble.current_noise_mode
+        has_anc = prof.has_anc if prof else True
+        if not has_anc:
+            self.noise_seg.setEnabled_(False)
+            self.noise_seg.setSelectedSegment_(-1)
+            self.anc_level_seg.setEnabled_(False)
+            self.anc_level_seg.setSelectedSegment_(-1)
+        else:
+            self.noise_seg.setEnabled_(True)
+            cur_prim = self.ble.last_primary_mode
+            cur_anc = self.ble.last_anc_mode
+            cur_noise = self.ble.current_noise_mode
 
-        if cur_prim == "Noise Cancellation" or cur_noise in ["Auto", "Low", "Moderate", "High", "Smart ANC", "Depth ANC", "Mild ANC"]:
-            self.noise_seg.setSelectedSegment_(0)
-            self.anc_level_seg.setEnabled_(True)
-            anc_map = {"Auto": 0, "Low": 1, "Moderate": 2, "High": 3, "Smart ANC": 0, "Depth ANC": 3, "Mild ANC": 1}
-            active_level = cur_anc or cur_noise
-            if active_level in anc_map:
-                self.anc_level_seg.setSelectedSegment_(anc_map[active_level])
-        elif cur_prim == "Off" or cur_noise == "Off":
-            self.noise_seg.setSelectedSegment_(1)
-            self.anc_level_seg.setEnabled_(False)
-        elif cur_prim == "Transparency" or cur_noise == "Transparency":
-            self.noise_seg.setSelectedSegment_(2)
-            self.anc_level_seg.setEnabled_(False)
+            if cur_prim == "Noise Cancellation" or cur_noise in ["Auto", "Low", "Moderate", "High", "Smart ANC", "Depth ANC", "Mild ANC"]:
+                self.noise_seg.setSelectedSegment_(0)
+                self.anc_level_seg.setEnabled_(True)
+                anc_map = {"Auto": 0, "Low": 1, "Moderate": 2, "High": 3, "Smart ANC": 0, "Depth ANC": 3, "Mild ANC": 1}
+                active_level = cur_anc or cur_noise
+                if active_level in anc_map:
+                    self.anc_level_seg.setSelectedSegment_(anc_map[active_level])
+            elif cur_prim == "Off" or cur_noise == "Off":
+                self.noise_seg.setSelectedSegment_(1)
+                self.anc_level_seg.setEnabled_(False)
+            elif cur_prim == "Transparency" or cur_noise == "Transparency":
+                self.noise_seg.setSelectedSegment_(2)
+                self.anc_level_seg.setEnabled_(False)
 
         # 5. Spatial Audio Segment
         sa_on = self.ble.features.get(FEATURE_SPATIAL_AUDIO, False)
         self.spatial_seg.setSelectedSegment_(1 if sa_on else 0)
+        if prof and not prof.has_spatial:
+            self.spatial_seg.setEnabled_(False)
+        else:
+            self.spatial_seg.setEnabled_(True)
 
         # 6. Audio Enhancement Switches
         feats = self.ble.features
         for fid, sw in self.enh_switches.items():
             f_val = feats.get(fid, False)
             sw.setState_(AppKit.NSControlStateValueOn if f_val else AppKit.NSControlStateValueOff)
+            # Hardware capability gating
+            supported = True
+            if fid == FEATURE_SPATIAL_AUDIO and prof and not prof.has_spatial: supported = False
+            elif fid == FEATURE_BASS_ENGINE and prof and not prof.has_bass_boost: supported = False
+            elif fid == FEATURE_DUAL_CONNECT and prof and not prof.has_dual_connect: supported = False
+            elif fid == FEATURE_GAME_MODE and prof and not prof.has_game_mode: supported = False
+            elif fid == FEATURE_IN_EAR and prof and not prof.has_in_ear: supported = False
+            sw.setEnabled_(supported)
 
         # 7. Sound Master EQ
         cur_eq = self.ble.current_eq
@@ -1534,7 +1729,7 @@ class BudsAirPodsApp(AppKit.NSObject):
             self.eq_seg.setSelectedSegment_(eq_map[cur_eq])
 
         # 8. Context Menu Updates
-        self.ctx_device_item.setTitle_(f"{self.ble.device_name}" + (f" ({prof.category_title})" if prof else ""))
+        self.ctx_devices_item.setTitle_(f"My Devices: {self.ble.device_name}" + (f" [{prof.device_type}]" if prof else ""))
         self.ctx_status_item.setTitle_(f"Status: {self.ble.status_message}")
 
         for it in self.anc_submenu.itemArray():
@@ -1635,6 +1830,28 @@ class BudsAirPodsApp(AppKit.NSObject):
     def onDisconnectClicked_(self, _):
         self.cancel_auto_dismiss()
         self.ble.disconnect()
+
+    def switch_to_device(self, target: str):
+        self.ble.switch_to_device(target)
+        self.update_devices_menu()
+        self.update_ui_state()
+
+    def onDevicesButtonClicked_(self, sender):
+        self.cancel_auto_dismiss()
+        self.update_devices_menu()
+        p = AppKit.NSMakePoint(0, sender.bounds().size.height + 4.0)
+        self.devices_submenu.popUpMenuPositioningItem_atLocation_inView_(None, p, sender)
+
+    def onCtxSwitchDeviceClicked_(self, sender):
+        target = sender.representedObject()
+        if target:
+            log(f"User requested switch to device: {target}")
+            self.switch_to_device(target)
+
+    def onCtxRescanClicked_(self, sender):
+        log("User requested device rescan.")
+        self.ble.start_targeted_scan()
+        self.update_devices_menu()
 
     def onQuitClicked_(self, _):
         if getattr(self, "ipc_server", None):

@@ -168,10 +168,11 @@ class BudsState:
 
         self.show_battery_in_bar: bool = False
         self.auto_pause_on_wear: bool = True
-        self.hide_when_disconnected: bool = False
+        self.hide_when_disconnected: bool = True
         self.last_wear_state: bool = False
 
         self.timestamp: float = time.time()
+        self.device_cache: Dict[str, Dict[str, Any]] = {}
         self.load_cache()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -203,6 +204,13 @@ class BudsState:
             prof = get_device_profile(data["product_id"])
             if prof:
                 self.profile = prof
+                self.device_name = prof.name
+        elif "name" in data and data["name"]:
+            prof = match_supported_device(data["name"])
+            if prof:
+                self.profile = prof
+                self.device_name = prof.name
+
         if "battery" in data and isinstance(data["battery"], dict):
             for k, v in data["battery"].items():
                 if k in self.battery and isinstance(v, dict):
@@ -221,21 +229,104 @@ class BudsState:
                 setattr(self, bool_field, bool(data[bool_field]))
         self.timestamp = data.get("timestamp", time.time())
 
+    def _get_device_key(self, address: Optional[str] = None, name: Optional[str] = None) -> str:
+        addr = (address or self.address or "").strip()
+        nm = (name or self.device_name or "").strip()
+        return addr.upper().replace("-", ":") if addr else nm
+
     def load_cache(self, path: str = CONFIG_FILE):
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.update_from_dict(data)
+                    if isinstance(data, dict):
+                        # Multi-device registry format
+                        if "devices" in data and isinstance(data["devices"], dict):
+                            self.device_cache = data["devices"]
+                            act_key = data.get("active_device")
+                            if act_key and act_key in self.device_cache:
+                                self.update_from_dict(self.device_cache[act_key])
+                            else:
+                                self.update_from_dict(data)
+                        else:
+                            # Legacy flat format
+                            self.update_from_dict(data)
+                            key = self._get_device_key()
+                            if key:
+                                self.device_cache[key] = self.to_dict()
             except Exception as e:
                 print(f"[BudsState] Error loading cache: {e}", file=sys.stderr)
 
     def save_cache(self, path: str = CONFIG_FILE):
         try:
+            key = self._get_device_key()
+            if key:
+                self.device_cache[key] = self.to_dict()
+
+            out_data = self.to_dict()
+            out_data["active_device"] = key
+            out_data["devices"] = self.device_cache
+
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(self.to_dict(), f, indent=2)
+                json.dump(out_data, f, indent=2)
         except Exception as e:
             print(f"[BudsState] Error saving cache: {e}", file=sys.stderr)
+
+    def load_device_state(self, identifier: str, address: Optional[str] = None):
+        """Switches active device state in memory and loads its cached properties."""
+        # Auto-resolve MAC address from paired devices if omitted
+        if not address:
+            try:
+                from core.menubar import get_paired_supported_devices
+                for d in get_paired_supported_devices():
+                    if (identifier.lower() in d["name"].lower() or 
+                        (d["address"] and identifier.lower() in d["address"].lower())):
+                        address = d["address"]
+                        break
+            except Exception:
+                pass
+
+        # Save current device before switching
+        current_key = self._get_device_key()
+        if current_key:
+            self.device_cache[current_key] = self.to_dict()
+
+        target_key = self._get_device_key(address=address, name=identifier)
+        cached = None
+        # Match by key or name
+        if target_key in self.device_cache:
+            cached = self.device_cache[target_key]
+        else:
+            for k, d in self.device_cache.items():
+                if d.get("address") and address and d.get("address").upper() == address.upper():
+                    cached = d
+                    break
+                if d.get("name") and identifier and d.get("name").lower() == identifier.lower():
+                    cached = d
+                    break
+
+        prof = match_supported_device(identifier) or get_device_profile(identifier) or DEFAULT_PROFILE
+
+        if cached:
+            self.update_from_dict(cached)
+            self.profile = prof
+            self.device_name = prof.name
+            if address:
+                self.address = address
+        else:
+            self.address = address or ""
+            self.device_name = prof.name
+            self.profile = prof
+            self.current_eq = "Balanced"
+            self.last_primary_mode = "Noise Cancellation" if prof.has_anc else "Off"
+            self.current_noise_mode = "Auto" if prof.has_anc else "Off"
+            self.last_anc_mode = "Auto" if prof.has_anc else "Off"
+            for k in ["left", "right", "case", "single"]:
+                self.battery[k] = {"level": 0, "charging": False, "connected": False}
+            for fid in self.features:
+                self.features[fid] = False
+
+        self.save_cache()
 
 
 # ==============================================================================

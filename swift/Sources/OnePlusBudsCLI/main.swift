@@ -40,6 +40,8 @@ func printHelp() {
 
     Commands:
       status                    Show live connection, battery, and noise mode
+      devices | --devices       List all paired OnePlus/OPPO earbuds (HeyMelody)
+      switch <device>           Switch active connection to target earbud
       on | anc                  Enable Active Noise Cancellation
       off                       Turn Noise Cancellation Off
       trans | transparency      Enable Transparency Mode
@@ -54,6 +56,8 @@ func printHelp() {
       help                      Show this help message
 
     Examples:
+      buds devices
+      buds switch "OnePlus Nord Buds 2"
       buds status
       buds on
       buds trans
@@ -116,10 +120,41 @@ func main() {
         exit(0)
     }
 
+    if args.contains("--devices") || args.contains("devices") {
+        let devs = BluetoothController.shared.getPairedDevices()
+        print("\n==================== PAIRED EARBUDS (HEYMELODY) ====================")
+        if devs.isEmpty {
+            print("  No paired OnePlus / OPPO / Realme earbuds found on this Mac.")
+        } else {
+            for d in devs {
+                let status = d.isConnected ? "● Connected" : "○ Disconnected"
+                let type = d.profile.isNeckband ? "Neckband" : (d.profile.hasAnc ? "T1 ANC" : "T2 Non-ANC")
+                print("  \(d.isConnected ? "●" : "○") \(d.name.padding(toLength: 26, withPad: " ", startingAt: 0)) [\(d.address)] (\(status), \(type))")
+            }
+        }
+        print("=====================================================================\n")
+        exit(0)
+    }
+
     let runner = CLIRunner()
     let cmd = args[1].lowercased()
 
     switch cmd {
+    case "switch", "--switch":
+        guard args.count >= 3 else {
+            print("Usage: buds switch <device-name-or-mac>")
+            print("Run 'buds devices' to view available paired earbuds.")
+            exit(1)
+        }
+        let target = args[2...].joined(separator: " ")
+        print("[*] Switching active device to '\(target)'...")
+        runner.controller.switchToDevice(identifier: target)
+        runner.targetAction = {
+            print("✅ Successfully switched to \(runner.controller.activeProfile?.name ?? target)!")
+            printStatusBox(controller: runner.controller)
+            runner.finish()
+        }
+
     case "status":
         runner.targetAction = {
             runner.controller.refresh()

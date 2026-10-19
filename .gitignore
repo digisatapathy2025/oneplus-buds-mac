@@ -18,4 +18,5 @@ venv/
 *.log
 *.sock
 tmp/
-.buds_controller_cache.json
+*.apk
+dist/
