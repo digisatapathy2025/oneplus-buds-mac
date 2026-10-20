@@ -644,7 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
             button.toolTip = "\(name)\n\(left)\(right)\(caseBat)".trimmingCharacters(in: .whitespaces)
             button.alphaValue = 1.0
         } else {
-            button.alphaValue = 0.65
+            button.alphaValue = 0.0
             button.toolTip = "OnePlus Buds (Disconnected)\nRight-click for My Devices"
         }
     }
