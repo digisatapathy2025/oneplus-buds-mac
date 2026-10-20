@@ -1,11 +1,43 @@
 # OnePlus Buds macOS Companion 🎧
 
 [![macOS](https://img.shields.io/badge/Platform-macOS%2014%2B%20(Sonoma%20%7C%20Sequoia)-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Architecture](https://img.shields.io/badge/Arch-Apple%20Silicon%20(arm64)%20%7C%20Intel%20(x86__64)-FF8000?style=for-the-badge)](https://apple.com)
-[![Devices](https://img.shields.io/badge/Supported%20Devices-82%2B%20Models-E0002A?style=for-the-badge)](./device_manager.py)
+[![Devices](https://img.shields.io/badge/Supported%20Devices-82%2B%20Models-E0002A?style=for-the-badge)](#-supported-hardware-82-models)
 
-A lightweight, native macOS menu bar companion application for **OnePlus**, **OPPO**, and **Realme** wireless earbuds and neckbands. Built on reverse-engineered BES link-layer Bluetooth Low Energy (BLE) protocols from the official HeyMelody app, it brings a seamless, native Apple AirPods-style experience to third-party audio gear on macOS.
+A lightweight, native macOS menu bar companion for **OnePlus**, **OPPO**, and **Realme** wireless earbuds and neckbands. Built on reverse-engineered link-layer Bluetooth Low Energy (BLE) protocols from the official HeyMelody app, it brings a seamless Apple AirPods-style popover and battery card experience to third-party audio gear on macOS.
+
+---
+
+## 📥 Installation
+
+### Option 1: Install via DMG (Recommended)
+1. Download the latest `OnePlus Buds-x.x.x.dmg` from the repository releases or build artifacts.
+2. Double-click the `.dmg` file to open it.
+3. Drag **OnePlus Buds.app** into your **Applications** folder.
+4. Launch **OnePlus Buds** from Applications or Spotlight.
+
+> [!NOTE]
+> **First-Time macOS Permission (Gatekeeper & Bluetooth):**
+> - When launching for the first time, macOS will request **Bluetooth** permission so the app can connect to your earbuds. Click **Allow**.
+> - If macOS displays an unidentified developer warning, open **System Settings > Privacy & Security** and click **Open Anyway**.
+
+---
+
+### Option 2: Build & Package from Source
+If you prefer to compile the standalone `.app` and `.dmg` locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/digisatapathy2025/oneplus-buds-mac.git
+cd oneplus-buds-mac
+
+# Run the automated packaging script
+./build_app.sh
+```
+
+The script compiles the native launcher, bundles all dependencies, ad-hoc signs the application, and creates:
+- `dist/OnePlus Buds.app`
+- `dist/OnePlus Buds-2.1.0.dmg`
 
 ---
 
@@ -38,40 +70,15 @@ A lightweight, native macOS menu bar companion application for **OnePlus**, **OP
   - `Bold`
 
 ### 4. ⚡ Zero-Polling Background Listener
-- **Event-Driven Daemon** (`bluetooth_monitor.py`): Powered by native `IOBluetooth` system notifications.
+- **Event-Driven Daemon**: Powered by native `IOBluetooth` system notifications.
 - **0.0% Idle CPU**: Operates without periodic BLE polling or continuous battery-draining scans.
 - **Automatic Wakeup**: Automatically wakes up and connects the moment you take the earbuds out of their charging case.
 - **Smart Filtering**: Strictly ignores non-audio Bluetooth peripherals (mice, keyboards, gamepads, trackpads) and unrelated headphones.
 
-### 5. 🔄 HeyMelody-Style Multi-Device Switching & Parity
-- **"My Devices" Switcher**: Native multi-device picker in the popover footer (`Devices ▾`) and right-click context menu, listing all paired OnePlus, OPPO, and Realme earphones on macOS with real-time connection state (`● Connected` / `○ Disconnected`) and cached battery metrics.
-- **Isolated Per-Device State & Cache**: Preserves individual EQ profiles, feature toggles, and battery metrics per MAC address in `~/.buds_controller_cache.json`, preventing settings clobbering when switching earbuds.
-- **Hardware Feature Gating**: Automatically adapts the popover and CLI controls to match the active device's hardware profile (e.g. Disabling ANC for T2 Non-ANC models like Nord Buds CE, gating Spatial Audio and BassWave).
-- **1-Click Switching Engine**: Disconnects the active BLE session, sends standard `IOBluetooth` Classic audio connection requests if needed, loads the target device's profile, and attaches the fast CoreBluetooth link.
-- **Active Audio Device Synchronization**: Binds CoreBluetooth GATT sessions strictly to the active system audio output device, preventing inactive cached devices from hijacking the connection.
-
-### 6. 💻 Terminal CLI & Unix Domain Socket IPC
-- Full headless control via command-line arguments:
-  ```bash
-  # List all paired OnePlus / OPPO earbuds (HeyMelody-style)
-  python3 buds.py --devices
-
-  # Switch active connection to a specific earbud
-  python3 buds.py switch "OnePlus Nord Buds 2"
-
-  # Check live battery and feature status
-  python3 buds.py status
-
-  # Change noise cancellation mode
-  python3 buds.py -m high
-
-  # Toggle low-latency Game Mode
-  python3 buds.py --game-mode on
-
-  # Change EQ preset
-  python3 buds.py --eq Balanced
-  ```
-- **Local IPC Socket** (`/tmp/oneplus_buds_ipc.sock`): Enables communication between the background daemon, the menu bar app, and custom terminal automation scripts. Remote commands include `list_devices` and `switch_device`.
+### 5. 🔄 HeyMelody-Style Multi-Device Switching
+- **"My Devices" Switcher**: Native multi-device picker in the popover footer (`Devices ▾`) and right-click context menu, listing all paired OnePlus, OPPO, and Realme earphones on macOS with real-time connection state (`● Connected` / `○ Disconnected`).
+- **Isolated Per-Device State & Cache**: Preserves individual EQ profiles, feature toggles, and battery metrics per MAC address in `~/.buds_controller_cache.json`.
+- **Hardware Feature Gating**: Automatically adapts the popover controls to match the active device's hardware profile (e.g. gracefully disabling ANC for T2 Non-ANC models like Nord Buds CE).
 
 ---
 
@@ -89,57 +96,6 @@ Supports all major OnePlus, OPPO, and Realme wireless audio products across mult
 | **OPPO Enco Free Series** | Enco Free4, Enco Free3, Enco Free2, Enco Free2i |
 | **OPPO Enco Air Series** | Enco Air5 Pro, Enco Air4 Pro, Enco Air3 Pro, Enco Air2 Pro, Enco Air4s, Enco Air3s |
 | **OPPO Enco Buds & Clips** | Enco Buds3 Pro, Enco Buds2, Enco Clip, Enco Clip2 |
-
-To see the complete catalog of supported devices directly in your terminal:
-```bash
-python3 buds.py --list-devices
-```
-
----
-
-## 📁 Architecture Overview
-
-```
-├── bluetooth_monitor.py      # Event-driven IOBluetooth system listener daemon
-├── buds.py                   # Unified entry point (Menu Bar, CLI, IPC client)
-├── buds_app.py               # Standalone runner for the menu bar agent
-├── buds_controller.py        # Controller interface for status and configuration
-├── core/
-│   ├── ble_controller.py     # Base BLE state machine and cache management
-│   ├── cli.py                # Command-line interface and formatting
-│   ├── ipc.py                # Unix domain socket server and client implementation
-│   ├── menubar.py            # Native AppKit menu bar companion (NSPopover UI)
-│   ├── protocol.py           # BES TLV packet encoding, decoding & checksum calculation
-│   └── transport_bleak.py    # Fallback cross-platform BLE transport
-├── device_manager.py         # Multi-model compatibility engine and profile matcher
-├── live_device_compatibility_catalog.json # Decrypted HeyMelody model definitions
-└── main.c                    # Native C launcher stub for macOS app bundle
-```
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- macOS 14.0+ (Sonoma or Sequoia)
-- Python 3.11+
-- Required Python packages:
-  ```bash
-  pip3 install pyobjc pyobjc-framework-CoreBluetooth bleak
-  ```
-
-### Running the Menu Bar App
-```bash
-# Launch the native Menu Bar Companion
-python3 buds.py --menubar
-```
-
-### Background Bluetooth Listener (Optional)
-To enable automatic launching when your earbuds connect to macOS, install the LaunchAgent:
-```bash
-# Start background listener in current session
-python3 bluetooth_monitor.py
-```
 
 ---
 
