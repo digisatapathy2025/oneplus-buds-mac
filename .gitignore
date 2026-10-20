@@ -1,4 +1,17 @@
-# Python
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Swift / SPM
+.build/
+Packages/
+*.xcodeproj
+*.xcworkspace
+Package.resolved
+
+# Python (Local workspace only, untracked)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,16 +20,21 @@ __pycache__/
 env/
 venv/
 .venv/
+*.py
+core/
 
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
+# Native launcher
+main.c
+
+# Binaries & Packaging
+*.apk
+dist/
+*.dmg
+*.app
+*.o
 
 # Logs, sockets & cache
 *.log
 *.sock
 tmp/
-*.apk
-dist/
+.buds_controller_cache.json

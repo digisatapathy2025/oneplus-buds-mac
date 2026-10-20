@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# build_app.sh — Package OnePlus Buds macOS Companion into .app and .dmg
+# build_app.sh — Package 100% Native Swift OnePlus Buds into .app and .dmg
 # ==============================================================================
 set -euo pipefail
 
@@ -11,31 +11,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIST_DIR="${SCRIPT_DIR}/dist"
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 DMG_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}.dmg"
+SWIFT_DIR="${SCRIPT_DIR}/swift"
 
-echo "==> [1/5] Cleaning up existing dist output..."
+echo "==> [1/5] Cleaning previous build artifacts..."
 rm -rf "${DIST_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 
-echo "==> [2/5] Compiling native launcher binary..."
-PY_CFLAGS=$(python3-config --cflags)
-PY_LDFLAGS=$(python3-config --ldflags --embed)
+echo "==> [2/5] Compiling 100% Native Swift release binaries..."
+(
+    cd "${SWIFT_DIR}"
+    swift build -c release
+)
 
-# Build launcher from main.c
-clang -O2 ${PY_CFLAGS} ${PY_LDFLAGS} -o "${APP_DIR}/Contents/MacOS/${APP_NAME}" "${SCRIPT_DIR}/main.c"
+echo "==> [3/5] Installing native Mach-O executable..."
+cp "${SWIFT_DIR}/.build/release/OnePlusBudsApp" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
-echo "==> [3/5] Bundling Python application resources..."
-cp -R "${SCRIPT_DIR}/core" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/buds_app.py" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/buds.py" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/buds_controller.py" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/device_manager.py" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/bluetooth_monitor.py" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/live_device_compatibility_catalog.json" "${APP_DIR}/Contents/Resources/"
-cp "${SCRIPT_DIR}/device_catalog_decrypted.json" "${APP_DIR}/Contents/Resources/"
+# Also copy CLI binary if built
+if [ -f "${SWIFT_DIR}/.build/release/buds" ]; then
+    mkdir -p "${DIST_DIR}/bin"
+    cp "${SWIFT_DIR}/.build/release/buds" "${DIST_DIR}/bin/buds"
+fi
 
-echo "==> [4/5] Generating Info.plist..."
+echo "==> [4/5] Generating Info.plist & code signing..."
 cat <<EOF > "${APP_DIR}/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -58,7 +57,7 @@ cat <<EOF > "${APP_DIR}/Contents/Info.plist"
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
@@ -69,8 +68,7 @@ cat <<EOF > "${APP_DIR}/Contents/Info.plist"
 </plist>
 EOF
 
-# Ad-hoc sign the bundle
-echo "==> Code signing application (ad-hoc)..."
+echo "==> Ad-hoc code signing native app bundle..."
 codesign --force --deep --sign - "${APP_DIR}"
 
 echo "==> [5/5] Building distributable .dmg..."
@@ -84,7 +82,9 @@ rm -rf "${DMG_TEMP_DIR}"
 
 echo ""
 echo "======================================================================"
-echo " Packaging complete!"
+echo " Packaging complete (100% Native Swift)!"
 echo " App Bundle:  ${APP_DIR}"
 echo " Disk Image:  ${DMG_PATH}"
+echo " App Size:    $(du -sh "${APP_DIR}" | cut -f1)"
+echo " DMG Size:    $(du -sh "${DMG_PATH}" | cut -f1)"
 echo "======================================================================"

@@ -1,10 +1,12 @@
-# OnePlus Buds macOS Companion 🎧
+# OnePlus Buds macOS Companion 🎧 (Native Swift Edition)
 
-[![macOS](https://img.shields.io/badge/Platform-macOS%2014%2B%20(Sonoma%20%7C%20Sequoia)-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
+[![macOS](https://img.shields.io/badge/Platform-macOS%2013%2B%20(Ventura%20%7C%20Sonoma%20%7C%20Sequoia)-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
+[![Swift](https://img.shields.io/badge/Swift-6.0-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://swift.org)
 [![Architecture](https://img.shields.io/badge/Arch-Apple%20Silicon%20(arm64)%20%7C%20Intel%20(x86__64)-FF8000?style=for-the-badge)](https://apple.com)
+[![Size](https://img.shields.io/badge/Binary%20Size-~380%20KB-brightgreen?style=for-the-badge)](#-installation)
 [![Devices](https://img.shields.io/badge/Supported%20Devices-82%2B%20Models-E0002A?style=for-the-badge)](#-supported-hardware-82-models)
 
-A lightweight, native macOS menu bar companion for **OnePlus**, **OPPO**, and **Realme** wireless earbuds and neckbands. Built on reverse-engineered link-layer Bluetooth Low Energy (BLE) protocols from the official HeyMelody app, it brings a seamless Apple AirPods-style popover and battery card experience to third-party audio gear on macOS.
+A 100% pure Swift, zero-dependency native macOS menu bar companion for **OnePlus**, **OPPO**, and **Realme** wireless earbuds and neckbands. Built on reverse-engineered link-layer Bluetooth Low Energy (BLE) protocols from the official HeyMelody app, it brings a seamless Apple AirPods-style popover and battery card experience to third-party audio gear on macOS.
 
 ---
 
@@ -12,7 +14,7 @@ A lightweight, native macOS menu bar companion for **OnePlus**, **OPPO**, and **
 
 ### Option 1: Install via DMG (Recommended)
 1. Download the latest `OnePlus Buds-x.x.x.dmg` from the repository releases or build artifacts.
-2. Double-click the `.dmg` file to open it.
+2. Double-click the `.dmg` file to mount it.
 3. Drag **OnePlus Buds.app** into your **Applications** folder.
 4. Launch **OnePlus Buds** from Applications or Spotlight.
 
@@ -24,20 +26,21 @@ A lightweight, native macOS menu bar companion for **OnePlus**, **OPPO**, and **
 ---
 
 ### Option 2: Build & Package from Source
-If you prefer to compile the standalone `.app` and `.dmg` locally:
+Requires macOS 13+ and Xcode Command Line Tools (`xcode-select --install`):
 
 ```bash
 # Clone the repository
 git clone https://github.com/digisatapathy2025/oneplus-buds-mac.git
 cd oneplus-buds-mac
 
-# Run the automated packaging script
+# Run the automated Swift packaging script
 ./build_app.sh
 ```
 
-The script compiles the native launcher, bundles all dependencies, ad-hoc signs the application, and creates:
-- `dist/OnePlus Buds.app`
-- `dist/OnePlus Buds-2.1.0.dmg`
+The script compiles the native Swift binary, ad-hoc codesigns the app bundle, and creates:
+- `dist/OnePlus Buds.app` (~380 KB native application bundle)
+- `dist/OnePlus Buds-2.1.0.dmg` (~140 KB distributable installer)
+- `dist/bin/buds` (optional standalone CLI binary)
 
 ---
 
@@ -69,15 +72,14 @@ The script compiles the native launcher, bundles all dependencies, ad-hoc signs 
   - `Clear`
   - `Bold`
 
-### 4. ⚡ Zero-Polling Background Listener
-- **Event-Driven Daemon**: Powered by native `IOBluetooth` system notifications.
-- **0.0% Idle CPU**: Operates without periodic BLE polling or continuous battery-draining scans.
-- **Automatic Wakeup**: Automatically wakes up and connects the moment you take the earbuds out of their charging case.
+### 4. ⚡ Zero-Polling Event-Driven Engine
+- **Event-Driven**: Powered by native `CoreBluetooth` and `IOBluetooth` system notifications.
+- **0.0% Idle CPU & ~12 MB RAM**: Zero background polling or battery drain.
+- **Automatic Wakeup**: Automatically connects the moment you open the earbud charging case.
 - **Smart Filtering**: Strictly ignores non-audio Bluetooth peripherals (mice, keyboards, gamepads, trackpads) and unrelated headphones.
 
 ### 5. 🔄 HeyMelody-Style Multi-Device Switching
 - **"My Devices" Switcher**: Native multi-device picker in the popover footer (`Devices ▾`) and right-click context menu, listing all paired OnePlus, OPPO, and Realme earphones on macOS with real-time connection state (`● Connected` / `○ Disconnected`).
-- **Isolated Per-Device State & Cache**: Preserves individual EQ profiles, feature toggles, and battery metrics per MAC address in `~/.buds_controller_cache.json`.
 - **Hardware Feature Gating**: Automatically adapts the popover controls to match the active device's hardware profile (e.g. gracefully disabling ANC for T2 Non-ANC models like Nord Buds CE).
 
 ---
