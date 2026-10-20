@@ -635,8 +635,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
 
     private func updateStatusItem(connected: Bool, profileName: String?) {
         guard let item = statusItem, let button = item.button else { return }
-        item.length = NSStatusItem.variableLength
         if connected {
+            item.isVisible = true
+            item.length = NSStatusItem.variableLength
             let name = profileName ?? "OnePlus Buds"
             let left = controller.battery.left.isConnected ? "L: \(controller.battery.left.level)% " : ""
             let right = controller.battery.right.isConnected ? "R: \(controller.battery.right.level)% " : ""
@@ -644,8 +645,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
             button.toolTip = "\(name)\n\(left)\(right)\(caseBat)".trimmingCharacters(in: .whitespaces)
             button.alphaValue = 1.0
         } else {
+            if popover?.isShown == true {
+                popover?.performClose(nil)
+            }
+            item.length = 0.0
+            item.isVisible = false
             button.alphaValue = 0.0
-            button.toolTip = "OnePlus Buds (Disconnected)\nRight-click for My Devices"
+            button.toolTip = ""
         }
     }
 
