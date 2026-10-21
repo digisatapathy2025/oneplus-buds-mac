@@ -453,6 +453,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
 
         updateStatusItem(connected: controller.isConnected, profileName: controller.activeProfile?.name)
         evaluateAutoQuitTimer()
+
+        // Auto-show connection popover card on launch for instant visual feedback
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.presentLaunchPopover()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        presentLaunchPopover()
+        return true
+    }
+
+    private func presentLaunchPopover() {
+        guard let item = statusItem, let button = item.button else { return }
+        // Ensure status item is temporarily visible even if disconnected so the popover has an anchor
+        item.isVisible = true
+        item.length = NSStatusItem.variableLength
+        button.alphaValue = controller.isConnected ? 1.0 : 0.65
+
+        if !controller.isConnected {
+            controller.attemptFastConnect()
+        }
+        popoverVC.updateUI()
+        if !popover.isShown {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     private func evaluateAutoQuitTimer() {
