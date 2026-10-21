@@ -121,7 +121,7 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
             log("[BLE] CentralManager not powered on yet (state=\(centralManager.state.rawValue)). Queuing connection request for \(profile.name).")
             self.activeProfile = profile
             self.pendingConnectTarget = (profile: profile, name: deviceName, address: deviceAddress)
-            self.isConnecting = true
+            self.isConnecting = false
             self.statusMessage = "Connecting..."
             notifyUI()
             return
