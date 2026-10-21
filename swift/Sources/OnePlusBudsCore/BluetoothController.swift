@@ -38,6 +38,7 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
     private var connectionTimeoutTimer: Timer?
     private var scanTimeoutTimer: Timer?
     private let lock = NSLock()
+    private var pendingConnectTarget: (profile: DeviceProfile, name: String?, address: String?)?
 
     override public init() {
         super.init()
@@ -95,7 +96,16 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         log("CBCentralManager state changed: \(central.state.rawValue)")
         if central.state == .poweredOn {
-            log("Bluetooth powered on. Idle; waiting for supported audio device event.")
+            if let pending = pendingConnectTarget {
+                pendingConnectTarget = nil
+                log("[BLE] CentralManager now powered on. Executing pending connection to \(pending.profile.name)")
+                connect(to: pending.profile, deviceName: pending.name, deviceAddress: pending.address)
+            } else if let (activeProf, dev) = SystemAudioMonitor.findConnectedSupportedDevice() {
+                log("[BLE] CentralManager powered on with active audio device: \(activeProf.name). Initiating fast connect.")
+                connect(to: activeProf, deviceName: dev.name ?? dev.nameOrAddress)
+            } else {
+                log("Bluetooth powered on. Idle; waiting for supported audio device event.")
+            }
         } else {
             if isConnected || isConnecting {
                 disconnect()
@@ -108,7 +118,12 @@ public final class BluetoothController: NSObject, CBCentralManagerDelegate, CBPe
     // =========================================================================
     public func connect(to profile: DeviceProfile, deviceName: String? = nil, deviceAddress: String? = nil) {
         guard centralManager.state == .poweredOn else {
-            log("[BLE] CentralManager not powered on. Cannot connect.")
+            log("[BLE] CentralManager not powered on yet (state=\(centralManager.state.rawValue)). Queuing connection request for \(profile.name).")
+            self.activeProfile = profile
+            self.pendingConnectTarget = (profile: profile, name: deviceName, address: deviceAddress)
+            self.isConnecting = true
+            self.statusMessage = "Connecting..."
+            notifyUI()
             return
         }
         guard !isConnected, !isConnecting else {
