@@ -441,6 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     private let controller = BluetoothController.shared
     private let audioMonitor = SystemAudioMonitor()
     private var popoverVC: BudsPopoverViewController!
+    private var autoQuitTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -451,6 +452,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
         audioMonitor.start()
 
         updateStatusItem(connected: controller.isConnected, profileName: controller.activeProfile?.name)
+        evaluateAutoQuitTimer()
+    }
+
+    private func evaluateAutoQuitTimer() {
+        if controller.isConnected || controller.isConnecting || SystemAudioMonitor.findConnectedSupportedDevice() != nil {
+            cancelAutoQuitTimer()
+        } else if autoQuitTimer == nil {
+            startAutoQuitTimer()
+        }
+    }
+
+    private func startAutoQuitTimer() {
+        cancelAutoQuitTimer()
+        autoQuitTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if !self.controller.isConnected && !self.controller.isConnecting && SystemAudioMonitor.findConnectedSupportedDevice() == nil {
+                    print("[OnePlus Buds] No audio device connected after 30s. Terminating application as requested.")
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        }
+    }
+
+    private func cancelAutoQuitTimer() {
+        autoQuitTimer?.invalidate()
+        autoQuitTimer = nil
     }
 
     private func setupStatusItem() {
@@ -661,6 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     func controllerStateChanged() {
         popoverVC?.updateUI()
         updateStatusItem(connected: controller.isConnected, profileName: controller.activeProfile?.name)
+        evaluateAutoQuitTimer()
     }
 
     func logMessage(_ message: String) {
@@ -671,6 +700,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
     // SystemAudioMonitorDelegate
     // =========================================================================
     func audioDeviceConnected(name: String, profile: DeviceProfile) {
+        cancelAutoQuitTimer()
         controller.connect(to: profile, deviceName: name)
         updateStatusItem(connected: true, profileName: profile.name)
     }
@@ -681,6 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, BluetoothControllerDel
         if popover.isShown {
             popover.performClose(nil)
         }
+        evaluateAutoQuitTimer()
     }
 }
 
